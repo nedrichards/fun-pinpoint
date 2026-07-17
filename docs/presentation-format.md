@@ -1,0 +1,344 @@
+# Pinpoint presentation format
+
+Pinpoint presentations are UTF-8 plain-text files, conventionally saved with
+the `.pin` extension. A presentation contains optional global defaults followed
+by one or more slides. Each slide begins with a separator line and may override
+the defaults in square brackets.
+
+## A minimal presentation
+
+```text
+[stage-color=black]
+[font=Sans 60px]
+[white]
+[center]
+
+--
+First slide
+
+-- [photo.jpg] [fill] [bottom-left]
+Second slide
+#This appears in the speaker view, not on the audience slide
+```
+
+Everything before the first separator supplies presentation defaults. It does
+not become an audience slide. Settings on a separator apply only to the slide
+that follows it.
+
+## Separators and inheritance
+
+A hyphen in the first column starts a new slide. `--` is the conventional and
+most readable separator, but the historical parser accepts any number of
+leading hyphens.
+
+```text
+-- [red] [transition=fade]
+This slide has a red background and fades in.
+```
+
+Each slide begins as a copy of the presentation defaults, then applies the
+bracketed settings on its separator from left to right. Later settings on the
+same line win. Text after the settings is ignored on the separator line.
+
+To put a literal hyphen in the first column, escape it:
+
+```text
+\-- this is audience text, not a separator
+```
+
+Pinpoint removes the backslash and treats the following character literally.
+This is also useful for a literal `#` in the first column or a literal
+backslash (`\\`).
+
+## Slide text, markup, and notes
+
+All non-setting content after a separator becomes the slide text. Leading and
+trailing newlines are removed; other whitespace is retained.
+
+Pango markup is enabled by default:
+
+```text
+--
+This is <b>bold</b>, <i>italic</i>, and <span foreground="yellow">yellow</span>.
+```
+
+Use `[no-markup]` when angle-bracketed text should be shown literally, and
+`[markup]` to turn markup back on.
+
+A `#` in the first column starts a speaker-note line. The marker is removed,
+the line is omitted from the audience slide, and consecutive note lines are
+joined with newlines:
+
+```text
+--
+Audience text
+#Remind the audience why this matters.
+#Pause before advancing.
+```
+
+An indented `#` is ordinary audience text. `\#` in the first column is also
+ordinary audience text. The launch-screen **Ignore Comments** option and the
+`--ignore-comments` CLI option discard these note lines while loading.
+
+## Settings reference
+
+Settings are case-sensitive and are not trimmed inside the brackets. Values
+may contain spaces. Unknown settings are deliberately interpreted as the slide
+background, preserving the original format.
+
+### Text and stage
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `[stage-color=COLOR]` | Base stage color shown behind fitted or missing media | `black` on screen; `white` for PDF |
+| `[font=DESCRIPTION]` | Pango font description for audience text | `Sans 60px` |
+| `[text-color=COLOR]` | Audience text color | `white` |
+| `[text-align=left\|center\|right]` | Alignment within multiline text | `left` |
+| `[center]` | Place the text in the center | default |
+| `[top]`, `[bottom]`, `[left]`, `[right]` | Place text at an edge | — |
+| `[top-left]`, `[top-right]`, `[bottom-left]`, `[bottom-right]` | Place text at a corner | — |
+| `[markup]`, `[no-markup]` | Enable or disable Pango markup | markup enabled |
+
+Colors use GTK color syntax. Common names such as `black`, `white`, and `red`,
+hex values such as `#3584e4`, and CSS-style forms such as `rgb(53,132,228)` are
+accepted.
+
+Text keeps a five-percent stage margin. It is reduced when necessary to fit at
+most 80 percent of the stage, but a small text layout is not enlarged.
+
+### Contrast shading
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `[shading-color=COLOR]` | Color of the rectangle behind audience text | `black` |
+| `[shading-opacity=NUMBER]` | Shading opacity from `0` to `1` | `0.66` |
+
+The renderer clamps opacity to the visible range. A value of `0` disables the
+visible shading without changing text placement.
+
+### Speaker view and timing
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `[notes-font=DESCRIPTION]` | Speaker-note font family or description | `Sans` |
+| `[notes-font-size=SIZE]` | Speaker-note font size | `20px` |
+| `[duration=NUMBER]` | Planned timing | `30` in defaults |
+
+The default-level duration is the target length of the whole presentation in
+minutes. A duration on an individual slide is that slide's planned time in
+seconds. Rehearsal mode replaces per-slide durations with the measured values
+when the presenter advances past the final slide.
+
+### Backgrounds
+
+Any bracketed value not recognized as another setting becomes the background:
+
+```text
+-- [photo.jpg]
+An image background
+
+-- [#1c71d8]
+A color background
+
+-- [clip.webm]
+A video background
+
+-- [camera]
+A portal-provided camera background
+```
+
+Relative filenames are resolved from the directory containing the `.pin`
+file. In the Flatpak, choose the presentation folder rather than only the file
+so Pinpoint also receives access to sibling images, videos, SVGs, transition
+files, and asset subdirectories.
+
+Background classification follows these rules in order:
+
+1. `camera`, matched without regard to case, requests the camera portal.
+2. `.avi`, `.ogg`, `.ogv`, `.mpg`, `.flv`, `.mpeg`, `.mov`, `.mp4`, `.wmv`,
+   `.webm`, `.mkv`, `.3gp`, and `.gif` are treated as video.
+3. `.svg` is rendered as scalable artwork.
+4. A valid GTK color is rendered as a solid color.
+5. Everything else is treated as an image filename.
+
+Video and SVG suffix checks are case-sensitive for compatibility with 0.1.8.
+When exporting a video-backed slide to PDF, Pinpoint samples at most four
+frames under fixed decode timeouts and chooses the strongest non-black,
+non-uniform candidate by contrast and visual detail. The result is cached for
+other slides using the same video, keeping export time bounded.
+
+### Background sizing and placement
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `[fit]` | Preserve aspect ratio and show the whole background | default |
+| `[fill]` | Preserve aspect ratio and cover the stage, cropping overflow | — |
+| `[stretch]` | Stretch independently to the stage width and height | — |
+| `[unscaled]` | Keep the original size unless it must shrink to fit | — |
+| `[bg-position=center]` | Center the sized background | default |
+| `[bg-position=left]`, `[bg-position=right]` | Align to a horizontal edge | — |
+| `[bg-position=top-left]`, `[bg-position=top-right]` | Align to a top corner | — |
+| `[bg-position=bottom-left]`, `[bg-position=bottom-right]` | Align to a bottom corner | — |
+
+The historical parser accidentally omitted bare `top` and `bottom` values for
+`bg-position`; those two values therefore fall back to center. The corner
+forms work. This does not affect `[top]` and `[bottom]`, which position text.
+
+### Camera preferences
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `[camera-framerate=FPS]` | Legacy preferred camera frame rate | automatic |
+| `[camera-resolution=WIDTHxHEIGHT]` | Legacy preferred camera resolution | automatic |
+
+These settings remain accepted and survive rehearsal serialization. On modern
+systems, the camera portal and PipeWire may negotiate a different stream.
+
+### Transitions
+
+Set a transition in the defaults or on a slide separator:
+
+```text
+[transition=fade]
+-- [transition=page-curl]
+Turn the page
+```
+
+Pinpoint retains the built-in 0.1.8 transition names unchanged:
+
+- `fade`
+- `slide-left`, `slide-up`, and `slide-in-left`
+- `text-slide-left`, `text-slide-up`, and `text-slide-down`
+- `spin`, `spin-bg`, and `spin-text`
+- `sheet` and `swing`
+- `page-curl` and `page-curl-both`
+- `action`
+
+The modern renderer also provides composable built-ins for common effects:
+
+| Transition | Effect |
+|---|---|
+| `slide` | Move the selected layer into and out of the stage |
+| `zoom` | Crossfade while scaling from 80% in or to 120% out |
+| `scale` | Alias for `zoom` |
+| `flip` | Crossfade around the horizontal or vertical 3D axis |
+| `fade` | Crossfade the selected layer |
+| `spin` | With an explicit layer, crossfade, rotate, and scale that layer |
+
+Use modifiers to describe how these built-ins behave:
+
+| Setting | Values | Default |
+|---|---|---|
+| `[transition-direction=VALUE]` | `left`, `right`, `up`, or `down` | `left` |
+| `[transition-layer=VALUE]` | `all`, `background`, or `text` | `default` |
+| `[transition-mode=VALUE]` | `both`, `in`, or `out` | `both` |
+| `[transition-duration=MILLISECONDS]` | A non-negative integer; `0` selects the effect default | effect default |
+| `[transition-easing=VALUE]` | `linear`, `ease-in`, `ease-out`, `ease-in-out`, or their `-quad` and `-cubic` forms; `ease-out-quint` is also accepted | `linear` |
+
+`all` transforms the complete composed slide. `background` transforms only
+the background media, while `text` transforms the audience text and its
+contrast shading together. `default` means `all` for the composable effects;
+for the historical `spin` name it preserves the original background-spin
+behavior. Backward navigation automatically reverses directional effects.
+
+For example:
+
+```text
+[transition=slide]
+[transition-direction=right]
+[transition-duration=750]
+[transition-easing=ease-out-cubic]
+
+--
+The whole slide enters from the left and travels right.
+
+-- [transition=flip] [transition-direction=down] [transition-layer=text] [transition-mode=in]
+Only this text and its shading flip into view.
+```
+
+Settings may be placed in the presentation defaults or on an individual slide
+separator. The transition named on a slide controls that slide's entrance and
+exit; `transition-mode` can restrict it to one side of that lifecycle.
+
+### External Clutter transition files
+
+If a transition name is not built in, Pinpoint keeps the original loading
+mechanism and looks for `NAME.json` relative to the presentation:
+
+```text
+-- [transition=my-company-reveal]
+This loads my-company-reveal.json beside the .pin file.
+```
+
+The compatibility loader understands the original top-level `ClutterState`
+array and its `pre`, `show`, and `post` targets. It maps `x`, `y`, `scale-x`,
+`scale-y`, `opacity`, `rotation-angle-x`, `rotation-angle-y`, and
+`rotation-angle-z` keys for the `actor`, `background`, `midground`, and
+`foreground` layers onto GTK snapshot transforms. Declared global and
+per-target durations are retained; `linear`, quadratic, cubic, and
+`easeOutQuint` easing names are supported.
+
+`transition-mode` also applies to an external transition, and an explicit
+`transition-duration` overrides its declared duration. Direction, layer, and
+easing come from the JSON itself because its states can animate several layers
+and properties independently.
+
+Clutter plugins, arbitrary custom actors, depth, and custom effects cannot be
+recreated without the retired Clutter runtime. Pinpoint warns about ignored
+entries and uses the supported layer animation. A missing or wholly unsupported
+file fails softly with a fade so an old presentation remains usable. Keep the
+JSON file and presentation in the same granted folder when running in Flatpak.
+
+### Embedded commands
+
+`[command=COMMAND]` associates a shell command with a slide:
+
+```text
+-- [command=printf 'demo started\n']
+Press Enter to run this command.
+```
+
+Press **Enter** during the presentation to run it, or **Tab** to edit the
+command first. Commands execute through `/bin/sh` inside the application
+sandbox. They cannot assume access to arbitrary host programs or files.
+
+## Live editing
+
+Pinpoint monitors the source file and reloads it after changes. It keeps the
+presenter at the first slide whose source changed, making a text editor and the
+presentation window practical side by side. Relative assets are re-resolved
+from the presentation directory.
+
+## PDF export
+
+The launch-screen menu can export A4 or US Letter PDFs in landscape or portrait
+orientation. Speaker notes may be emitted as a separate page after each slide
+that has notes. Comment-derived notes can be included or ignored independently.
+
+The equivalent CLI form is:
+
+```sh
+pinpoint --output=talk.pdf --pdf-page-size=a4 \
+  --pdf-orientation=landscape talk.pin
+```
+
+Use `--pdf-no-speaker-notes` for slides only and `--ignore-comments` to discard
+comment-derived notes.
+
+## Compatibility rules worth knowing
+
+- A presentation must contain at least one separator.
+- Any leading hyphen starts a slide unless escaped.
+- Only bracketed settings before the first separator and on separator lines
+  are configuration; brackets in slide text are audience text.
+- Settings are applied in order, and later settings win.
+- Unknown settings become the background.
+- Media and SVG suffix matching is case-sensitive.
+- Speaker-note lines must begin with `#` in the first column.
+- Background `top` and `bottom` alignment retain the 0.1.8 omission.
+- Commands run inside the Flatpak sandbox.
+
+These rules are intentional compatibility behavior, not recommendations for
+new files. New presentations should use `--` separators, lowercase media
+suffixes, explicit setting names where available, and assets stored beside the
+presentation.

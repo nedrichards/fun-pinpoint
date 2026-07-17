@@ -1,0 +1,2010 @@
+#include "config.h"
+
+#include "pp-stage.h"
+
+#include "pp-page-curl-view.h"
+#include "pp-render.h"
+#include "pp-transition.h"
+
+#include <gio/gunixfdlist.h>
+#include <gst/gst.h>
+#include <librsvg/rsvg.h>
+#include <unistd.h>
+
+#define PORTAL_BUS_NAME "org.freedesktop.portal.Desktop"
+#define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
+#define CAMERA_INTERFACE "org.freedesktop.portal.Camera"
+#define REQUEST_INTERFACE "org.freedesktop.portal.Request"
+
+typedef struct
+{
+  GstElement *player;
+  GstElement *video_sink;
+  GdkPaintable *paintable;
+  char *label;
+  guint bus_watch_id;
+  int fd;
+  gboolean playing;
+  gboolean failed;
+  gboolean diagnostics_reported;
+} PpMedia;
+
+typedef struct
+{
+  float width;
+  float height;
+  guint pango_serial;
+  int scale_factor;
+  PpRect rect;
+  GskRenderNode *node;
+} PpCachedText;
+
+typedef struct
+{
+  float width;
+  float height;
+  GskRenderNode *node;
+} PpCachedSvg;
+
+typedef PpTransitionLayerState LayerState;
+typedef PpTransitionState TransitionState;
+
+struct _PpStage
+{
+  GtkWidget parent_instance;
+
+  PpPresentation *presentation;
+  GHashTable *textures;
+  GHashTable *text_nodes;
+  GHashTable *svg_nodes;
+  GHashTable *media;
+  GHashTable *legacy_transitions;
+  GHashTable *failed_transitions;
+  guint current_slide;
+  guint previous_slide;
+  gboolean blank;
+  gboolean media_enabled;
+  gboolean audio_enabled;
+
+  gboolean transitioning;
+  gboolean backwards;
+  gint64 transition_started;
+  guint transition_duration_ms;
+  guint tick_id;
+
+  PpPageCurlView *curl_view;
+  GdkTexture *curl_previous_texture;
+  GdkTexture *curl_current_texture;
+  float curl_texture_width;
+  float curl_texture_height;
+  int curl_texture_scale;
+
+  GDBusConnection *portal_connection;
+  guint camera_idle_id;
+  guint camera_response_subscription;
+  char *camera_request_path;
+  char *camera_device;
+  gboolean camera_request_pending;
+  gboolean camera_request_attempted;
+  gboolean renderer_reported;
+};
+
+G_DEFINE_FINAL_TYPE (PpStage, pp_stage, GTK_TYPE_WIDGET)
+
+enum
+{
+  SLIDE_CHANGED,
+  PRESENTATION_ENDED,
+  N_SIGNALS,
+};
+
+static guint signals[N_SIGNALS];
+
+static void
+cached_text_free (PpCachedText *cached)
+{
+  if (cached == NULL)
+    return;
+  g_clear_pointer (&cached->node, gsk_render_node_unref);
+  g_free (cached);
+}
+
+static void
+cached_svg_free (PpCachedSvg *cached)
+{
+  if (cached == NULL)
+    return;
+  g_clear_pointer (&cached->node, gsk_render_node_unref);
+  g_free (cached);
+}
+
+static void
+report_media_pipeline (PpMedia *media)
+{
+  g_autoptr (GstCaps) caps = NULL;
+  g_autoptr (GString) elements = g_string_new (NULL);
+  g_autofree char *caps_text = NULL;
+  GstPad *pad;
+  GstIterator *iterator;
+  GValue item = G_VALUE_INIT;
+  gboolean done = FALSE;
+
+  if (media->diagnostics_reported || media->video_sink == NULL)
+    return;
+  pad = gst_element_get_static_pad (media->video_sink, "sink");
+  if (pad != NULL)
+    {
+      caps = gst_pad_get_current_caps (pad);
+      gst_object_unref (pad);
+    }
+  if (caps == NULL)
+    return;
+
+  iterator = gst_bin_iterate_recurse (GST_BIN (media->player));
+  while (!done)
+    switch (gst_iterator_next (iterator, &item))
+      {
+      case GST_ITERATOR_OK:
+        {
+          GstElement *element = g_value_get_object (&item);
+          GstElementFactory *factory = gst_element_get_factory (element);
+
+          if (factory != NULL)
+            {
+              if (elements->len > 0)
+                g_string_append (elements, ", ");
+              g_string_append (elements,
+                               gst_plugin_feature_get_name (
+                                 GST_PLUGIN_FEATURE (factory)));
+            }
+          g_value_reset (&item);
+          break;
+        }
+      case GST_ITERATOR_RESYNC:
+        gst_iterator_resync (iterator);
+        g_string_truncate (elements, 0);
+        break;
+      case GST_ITERATOR_DONE:
+      case GST_ITERATOR_ERROR:
+        done = TRUE;
+        break;
+      }
+  if (G_IS_VALUE (&item))
+    g_value_unset (&item);
+  gst_iterator_free (iterator);
+
+  caps_text = gst_caps_to_string (caps);
+  g_log ("pinpoint-media",
+         G_LOG_LEVEL_DEBUG,
+         "Media pipeline “%s” negotiated %s; selected elements [%s]",
+         media->label,
+         caps_text,
+         elements->str);
+  media->diagnostics_reported = TRUE;
+}
+
+static void
+report_render_backend (PpStage *self)
+{
+  GtkNative *native;
+  GskRenderer *renderer;
+  GdkDisplay *display;
+
+  if (self->renderer_reported)
+    return;
+  native = gtk_widget_get_native (GTK_WIDGET (self));
+  renderer = native != NULL ? gtk_native_get_renderer (native) : NULL;
+  if (renderer == NULL)
+    return;
+  if (!g_str_equal (G_OBJECT_TYPE_NAME (renderer), "GskGLRenderer") &&
+      !g_str_equal (G_OBJECT_TYPE_NAME (renderer), "GskNglRenderer") &&
+      !g_str_equal (G_OBJECT_TYPE_NAME (renderer), "GskVulkanRenderer"))
+    g_error ("Pinpoint requires an OpenGL or Vulkan GSK renderer; got %s",
+             G_OBJECT_TYPE_NAME (renderer));
+  display = gtk_widget_get_display (GTK_WIDGET (self));
+  g_log ("pinpoint-media",
+         G_LOG_LEVEL_DEBUG,
+         "Display backend %s; GSK renderer %s; scale factor %d",
+         G_OBJECT_TYPE_NAME (display),
+         G_OBJECT_TYPE_NAME (renderer),
+         gtk_widget_get_scale_factor (GTK_WIDGET (self)));
+  self->renderer_reported = TRUE;
+}
+
+static gboolean
+media_bus_cb (GstBus     *bus,
+              GstMessage *message,
+              gpointer    user_data)
+{
+  PpMedia *media = user_data;
+
+  (void) bus;
+  if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR)
+    {
+      g_autoptr (GError) error = NULL;
+      g_autofree char *debug = NULL;
+
+      gst_message_parse_error (message, &error, &debug);
+      if (!media->failed)
+        g_warning ("Unable to play video background: %s", error->message);
+      media->failed = TRUE;
+      if (GST_IS_ELEMENT (media->player))
+        gst_element_set_state (media->player, GST_STATE_NULL);
+      media->playing = FALSE;
+      media->bus_watch_id = 0;
+      return G_SOURCE_REMOVE;
+    }
+  if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ASYNC_DONE)
+    report_media_pipeline (media);
+  else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_STATE_CHANGED &&
+           GST_MESSAGE_SRC (message) == GST_OBJECT (media->player))
+    {
+      GstState new_state;
+
+      gst_message_parse_state_changed (message, NULL, &new_state, NULL);
+      if (new_state >= GST_STATE_PAUSED)
+        report_media_pipeline (media);
+    }
+
+  return G_SOURCE_CONTINUE;
+}
+
+static void
+media_free (PpMedia *media)
+{
+  if (media == NULL)
+    return;
+
+  if (media->bus_watch_id != 0)
+    g_source_remove (media->bus_watch_id);
+  if (GST_IS_ELEMENT (media->player))
+    {
+      gst_element_set_state (media->player, GST_STATE_NULL);
+      gst_element_get_state (media->player,
+                             NULL,
+                             NULL,
+                             2 * GST_SECOND);
+    }
+  g_clear_object (&media->paintable);
+  gst_clear_object (&media->video_sink);
+  gst_clear_object (&media->player);
+  g_clear_pointer (&media->label, g_free);
+  if (media->fd >= 0)
+    close (media->fd);
+  g_free (media);
+}
+
+static void
+stop_all_media (PpStage *self)
+{
+  GHashTableIter iter;
+  gpointer value;
+
+  g_hash_table_iter_init (&iter, self->media);
+  while (g_hash_table_iter_next (&iter, NULL, &value))
+    {
+      PpMedia *media = value;
+
+      if (media->playing && GST_IS_ELEMENT (media->player))
+        {
+          gst_element_set_state (media->player, GST_STATE_NULL);
+          media->playing = FALSE;
+        }
+    }
+}
+
+static LayerState
+layer_state_identity (void)
+{
+  return (LayerState) {
+    .scale_x = 1.0f,
+    .scale_y = 1.0f,
+    .opacity = 1.0f,
+  };
+}
+
+static TransitionState
+transition_state_identity (void)
+{
+  LayerState identity = layer_state_identity ();
+
+  return (TransitionState) {
+    .actor = identity,
+    .background = identity,
+    .midground = identity,
+    .foreground = identity,
+  };
+}
+
+static PpLegacyTransition *
+lookup_legacy_transition (PpStage    *self,
+                          const char *name)
+{
+  g_autoptr (GError) error = NULL;
+  PpLegacyTransition *transition;
+
+  transition = g_hash_table_lookup (self->legacy_transitions, name);
+  if (transition != NULL)
+    return transition;
+  if (g_hash_table_contains (self->failed_transitions, name))
+    return NULL;
+
+  transition = pp_legacy_transition_load (self->presentation, name, &error);
+  if (transition == NULL)
+    {
+      g_warning ("Unable to load legacy transition “%s”: %s; using fade",
+                 name,
+                 error->message);
+      g_hash_table_add (self->failed_transitions, g_strdup (name));
+      return NULL;
+    }
+  g_hash_table_insert (self->legacy_transitions,
+                       g_strdup (name),
+                       transition);
+  return transition;
+}
+
+static guint
+transition_duration (PpStage       *self,
+                     const PpSlide *slide,
+                     gboolean       incoming,
+                     gboolean       backwards)
+{
+  PpLegacyTransition *transition;
+  const char *name = slide->transition;
+
+  if (name == NULL || *name == '\0')
+    return 0;
+  if ((incoming && slide->transition_mode == PP_TRANSITION_MODE_OUT) ||
+      (!incoming && slide->transition_mode == PP_TRANSITION_MODE_IN))
+    return 0;
+  if (slide->transition_duration_ms > 0)
+    return slide->transition_duration_ms;
+  if (g_str_equal (name, "fade") ||
+      g_str_equal (name, "spin") ||
+      g_str_equal (name, "spin-bg") ||
+      g_str_equal (name, "spin-text"))
+    return 800;
+  if (g_str_equal (name, "page-curl"))
+    return 2000;
+  if (pp_transition_is_builtin (name))
+    return 1000;
+
+  transition = lookup_legacy_transition (self, name);
+  if (transition != NULL)
+    return pp_legacy_transition_get_duration (transition,
+                                              incoming,
+                                              backwards);
+  return 1000;
+}
+
+static gboolean
+transition_side_enabled (const PpSlide *slide,
+                         gboolean       incoming)
+{
+  return !((incoming && slide->transition_mode == PP_TRANSITION_MODE_OUT) ||
+           (!incoming && slide->transition_mode == PP_TRANSITION_MODE_IN));
+}
+
+static guint
+transition_target_layers (TransitionState   *state,
+                          PpTransitionLayer  target,
+                          LayerState        *layers[2])
+{
+  if (target == PP_TRANSITION_LAYER_BACKGROUND)
+    {
+      layers[0] = &state->background;
+      return 1;
+    }
+  if (target == PP_TRANSITION_LAYER_TEXT)
+    {
+      layers[0] = &state->midground;
+      layers[1] = &state->foreground;
+      return 2;
+    }
+
+  layers[0] = &state->actor;
+  return 1;
+}
+
+static void
+set_spin_state (LayerState *state,
+                gboolean    incoming,
+                double      progress,
+                float       direction)
+{
+  if (incoming)
+    {
+      state->angle = (float) (-360.0 * direction * (1.0 - progress));
+      state->scale_x = state->scale_y = (float) (0.01 + 0.99 * progress);
+      state->opacity = (float) progress;
+    }
+  else
+    {
+      state->angle = (float) (360.0 * direction * progress);
+      state->scale_x = state->scale_y = (float) (1.0 + 3.0 * progress);
+      state->opacity = (float) (1.0 - progress);
+    }
+}
+
+static TransitionState
+calculate_transition (PpStage       *self,
+                      const PpSlide *slide,
+                      gboolean       incoming,
+                      gboolean       backwards,
+                      double         progress)
+{
+  TransitionState state = transition_state_identity ();
+  LayerState *targets[2] = { NULL, NULL };
+  const char *name = slide->transition;
+  guint n_targets;
+  float direction = backwards ? -1.0f : 1.0f;
+
+  if (name == NULL || *name == '\0' ||
+      !transition_side_enabled (slide, incoming))
+    return state;
+
+  if (!pp_transition_is_builtin (name))
+    {
+      PpLegacyTransition *transition = lookup_legacy_transition (self, name);
+
+      if (transition != NULL)
+        {
+          pp_legacy_transition_calculate (transition,
+                                          incoming,
+                                          backwards,
+                                          progress,
+                                          &state);
+          return state;
+        }
+      state.actor.opacity = incoming ? (float) progress
+                                     : (float) (1.0 - progress);
+      return state;
+    }
+
+  progress = pp_transition_apply_easing (slide->transition_easing,
+                                         CLAMP (progress, 0.0, 1.0));
+  n_targets = transition_target_layers (&state,
+                                        slide->transition_layer,
+                                        targets);
+
+  if (g_str_equal (name, "fade"))
+    {
+      for (guint i = 0; i < n_targets; i++)
+        targets[i]->opacity = incoming ? (float) progress
+                                       : (float) (1.0 - progress);
+    }
+  else if (g_str_equal (name, "slide"))
+    {
+      float axis_direction = direction;
+      float offset;
+
+      if (slide->transition_direction == PP_TRANSITION_DIRECTION_RIGHT ||
+          slide->transition_direction == PP_TRANSITION_DIRECTION_DOWN)
+        axis_direction *= -1.0f;
+      offset = incoming
+        ? axis_direction * (float) ((1.0 - progress) * 1024.0)
+        : -axis_direction * (float) (progress * 1024.0);
+      for (guint i = 0; i < n_targets; i++)
+        {
+          if (slide->transition_direction == PP_TRANSITION_DIRECTION_LEFT ||
+              slide->transition_direction == PP_TRANSITION_DIRECTION_RIGHT)
+            targets[i]->x = offset;
+          else
+            targets[i]->y = offset;
+        }
+    }
+  else if (g_str_equal (name, "zoom") || g_str_equal (name, "scale"))
+    {
+      float scale = incoming
+        ? (float) (0.8 + 0.2 * progress)
+        : (float) (1.0 + 0.2 * progress);
+      float opacity = incoming ? (float) progress
+                               : (float) (1.0 - progress);
+
+      for (guint i = 0; i < n_targets; i++)
+        {
+          targets[i]->scale_x = targets[i]->scale_y = scale;
+          targets[i]->opacity = opacity;
+        }
+    }
+  else if (g_str_equal (name, "flip"))
+    {
+      float axis_direction = direction;
+      float angle;
+      float opacity = incoming ? (float) progress
+                               : (float) (1.0 - progress);
+
+      if (slide->transition_direction == PP_TRANSITION_DIRECTION_RIGHT ||
+          slide->transition_direction == PP_TRANSITION_DIRECTION_DOWN)
+        axis_direction *= -1.0f;
+      angle = incoming
+        ? axis_direction * (float) (90.0 * (1.0 - progress))
+        : -axis_direction * (float) (90.0 * progress);
+      for (guint i = 0; i < n_targets; i++)
+        {
+          if (slide->transition_direction == PP_TRANSITION_DIRECTION_LEFT ||
+              slide->transition_direction == PP_TRANSITION_DIRECTION_RIGHT)
+            targets[i]->angle_y = angle;
+          else
+            targets[i]->angle_x = angle;
+          targets[i]->opacity = opacity;
+        }
+    }
+  else if (g_str_equal (name, "spin") &&
+           slide->transition_layer != PP_TRANSITION_LAYER_DEFAULT)
+    {
+      float spin_direction = direction;
+
+      if (slide->transition_direction == PP_TRANSITION_DIRECTION_RIGHT ||
+          slide->transition_direction == PP_TRANSITION_DIRECTION_DOWN)
+        spin_direction *= -1.0f;
+      for (guint i = 0; i < n_targets; i++)
+        set_spin_state (targets[i], incoming, progress, spin_direction);
+    }
+  else if (g_str_has_prefix (name, "page-curl"))
+    {
+      state.actor.opacity = incoming ? (float) progress : (float) (1.0 - progress);
+    }
+  else if (g_str_equal (name, "slide-left") || g_str_equal (name, "action"))
+    {
+      state.actor.x = incoming
+        ? direction * (float) ((1.0 - progress) * 1024.0)
+        : -direction * (float) (progress * 1024.0);
+    }
+  else if (g_str_equal (name, "slide-up"))
+    {
+      state.actor.y = incoming
+        ? direction * (float) ((1.0 - progress) * 1024.0)
+        : -direction * (float) (progress * 1024.0);
+    }
+  else if (g_str_equal (name, "slide-in-left"))
+    {
+      if (incoming)
+        state.actor.x = direction * (float) ((1.0 - progress) * 1024.0);
+      state.actor.opacity = incoming ? (float) progress : (float) (1.0 - progress);
+    }
+  else if (g_str_equal (name, "text-slide-left"))
+    {
+      float offset = incoming
+        ? direction * (float) ((1.0 - progress) * 1024.0)
+        : -direction * (float) (progress * 1024.0);
+      float opacity = incoming ? (float) progress : (float) (1.0 - progress);
+
+      state.foreground.x = offset;
+      state.midground.x = offset;
+      state.midground.opacity = opacity;
+      state.background.opacity = opacity;
+    }
+  else if (g_str_equal (name, "text-slide-up") ||
+           g_str_equal (name, "text-slide-down"))
+    {
+      float transition_direction = g_str_equal (name, "text-slide-down") ? -1.0f : 1.0f;
+      float offset = incoming
+        ? transition_direction * direction * (float) ((1.0 - progress) * 1024.0)
+        : -transition_direction * direction * (float) (progress * 1024.0);
+      float opacity = incoming ? (float) progress : (float) (1.0 - progress);
+
+      state.foreground.y = offset;
+      state.midground.y = offset;
+      state.background.opacity = opacity;
+    }
+  else if (g_str_equal (name, "spin-bg"))
+    {
+      set_spin_state (&state.actor, incoming, progress, 1.0f);
+    }
+  else if (g_str_equal (name, "spin"))
+    {
+      set_spin_state (&state.background, incoming, progress, 1.0f);
+      state.actor.opacity = incoming ? (float) progress : (float) (1.0 - progress);
+    }
+  else if (g_str_equal (name, "spin-text"))
+    {
+      set_spin_state (&state.foreground, incoming, progress, 1.0f);
+      state.midground = state.foreground;
+      state.actor.opacity = incoming ? (float) progress : (float) (1.0 - progress);
+    }
+  else if (g_str_equal (name, "sheet") || g_str_equal (name, "swing"))
+    {
+      state.actor.opacity = incoming ? (float) progress : (float) (1.0 - progress);
+      if (g_str_equal (name, "sheet"))
+        {
+          if (!backwards)
+            {
+              state.actor.angle_x = incoming
+                ? (float) (90.0 * (1.0 - progress))
+                : 0.0f;
+              state.actor.y = incoming ? 0.0f : (float) (progress * 1024.0);
+            }
+          else
+            {
+              state.actor.angle_x = incoming ? 0.0f : (float) (90.0 * progress);
+              state.actor.y = incoming
+                ? (float) ((1.0 - progress) * 1024.0)
+                : 0.0f;
+            }
+        }
+      else if (!backwards)
+        {
+          state.actor.angle_x = incoming
+            ? (float) (90.0 * (1.0 - progress))
+            : (float) (-90.0 * progress);
+        }
+      else
+        {
+          state.actor.angle_x = incoming
+            ? (float) (-90.0 * (1.0 - progress))
+            : (float) (90.0 * progress);
+        }
+    }
+  return state;
+}
+
+static void
+snapshot_layer_begin (GtkSnapshot       *snapshot,
+                      const LayerState  *state,
+                      float              width,
+                      float              height)
+{
+  graphene_point_t point;
+  graphene_vec3_t x_axis;
+  graphene_vec3_t y_axis;
+
+  gtk_snapshot_save (snapshot);
+  graphene_point_init (&point, state->x, state->y);
+  gtk_snapshot_translate (snapshot, &point);
+
+  graphene_point_init (&point, width / 2.0f, height / 2.0f);
+  gtk_snapshot_translate (snapshot, &point);
+  if (state->angle_x != 0.0f || state->angle_y != 0.0f)
+    gtk_snapshot_perspective (snapshot, MAX (width, height) * 2.0f);
+  if (state->angle_x != 0.0f)
+    {
+      graphene_vec3_init (&x_axis, 1.0f, 0.0f, 0.0f);
+      gtk_snapshot_rotate_3d (snapshot, state->angle_x, &x_axis);
+    }
+  if (state->angle_y != 0.0f)
+    {
+      graphene_vec3_init (&y_axis, 0.0f, 1.0f, 0.0f);
+      gtk_snapshot_rotate_3d (snapshot, state->angle_y, &y_axis);
+    }
+  gtk_snapshot_rotate (snapshot, state->angle);
+  gtk_snapshot_scale (snapshot, state->scale_x, state->scale_y);
+  graphene_point_init (&point, -width / 2.0f, -height / 2.0f);
+  gtk_snapshot_translate (snapshot, &point);
+  gtk_snapshot_push_opacity (snapshot, CLAMP (state->opacity, 0.0f, 1.0f));
+}
+
+static void
+snapshot_layer_end (GtkSnapshot *snapshot)
+{
+  gtk_snapshot_pop (snapshot);
+  gtk_snapshot_restore (snapshot);
+}
+
+static GdkTexture *
+load_texture (PpStage              *self,
+              const PpPresentation *presentation,
+              const char           *asset)
+{
+  g_autoptr (GFile) file = NULL;
+  g_autofree char *uri = NULL;
+  g_autoptr (GError) error = NULL;
+  GdkTexture *texture;
+
+  file = pp_render_resolve_asset (presentation, asset);
+  uri = g_file_get_uri (file);
+  texture = g_hash_table_lookup (self->textures, uri);
+  if (texture != NULL)
+    return texture;
+
+  texture = gdk_texture_new_from_file (file, &error);
+  if (texture == NULL)
+    {
+      g_warning ("Unable to load background %s: %s", asset, error->message);
+      return NULL;
+    }
+
+  g_hash_table_insert (self->textures, g_steal_pointer (&uri), texture);
+  return texture;
+}
+
+static PpMedia *
+load_media (PpStage              *self,
+            const PpPresentation *presentation,
+            const char           *asset)
+{
+  g_autoptr (GFile) file = pp_render_resolve_asset (presentation, asset);
+  g_autofree char *uri = g_file_get_uri (file);
+  GstElement *sink;
+  GstElement *audio_sink = NULL;
+  GstBus *bus;
+  PpMedia *media = g_hash_table_lookup (self->media, uri);
+
+  if (media != NULL)
+    return media;
+
+  sink = gst_element_factory_make ("gtk4paintablesink", NULL);
+  if (sink == NULL)
+    {
+      g_warning ("The gtk4paintablesink GStreamer element is unavailable");
+      return NULL;
+    }
+  if (g_object_is_floating (sink))
+    gst_object_ref_sink (sink);
+
+  media = g_new0 (PpMedia, 1);
+  media->fd = -1;
+  media->label = g_strdup (asset);
+  media->player = gst_element_factory_make ("playbin3", NULL);
+  if (media->player == NULL)
+    media->player = gst_element_factory_make ("playbin", NULL);
+  if (media->player == NULL)
+    {
+      g_warning ("The GStreamer playback element is unavailable");
+      gst_object_unref (sink);
+      g_free (media);
+      return NULL;
+    }
+  if (g_object_is_floating (media->player))
+    gst_object_ref_sink (media->player);
+
+  media->video_sink = gst_object_ref (sink);
+  g_object_get (sink, "paintable", &media->paintable, NULL);
+  if (!self->audio_enabled)
+    {
+      audio_sink = gst_element_factory_make ("fakesink", NULL);
+      if (audio_sink != NULL)
+        {
+          if (g_object_is_floating (audio_sink))
+            gst_object_ref_sink (audio_sink);
+          g_object_set (audio_sink, "sync", FALSE, NULL);
+        }
+    }
+  g_object_set (media->player,
+                "uri", uri,
+                "video-sink", sink,
+                "audio-sink", audio_sink,
+                NULL);
+  gst_object_unref (sink);
+  if (audio_sink != NULL)
+    gst_object_unref (audio_sink);
+
+  if (media->paintable == NULL)
+    {
+      g_warning ("The GTK 4 video sink did not provide a paintable");
+      media_free (media);
+      return NULL;
+    }
+
+  g_signal_connect_object (media->paintable,
+                           "invalidate-contents",
+                           G_CALLBACK (gtk_widget_queue_draw),
+                           self,
+                           G_CONNECT_SWAPPED);
+  g_signal_connect_object (media->paintable,
+                           "invalidate-size",
+                           G_CALLBACK (gtk_widget_queue_draw),
+                           self,
+                           G_CONNECT_SWAPPED);
+  bus = gst_element_get_bus (media->player);
+  media->bus_watch_id = gst_bus_add_watch (bus, media_bus_cb, media);
+  gst_object_unref (bus);
+  g_hash_table_insert (self->media, g_steal_pointer (&uri), media);
+
+  return media;
+}
+
+static PpMedia *
+create_camera_media (PpStage *self,
+                     int      fd)
+{
+  GstElement *source;
+  GstElement *sink;
+  GstBus *bus;
+  PpMedia *media;
+
+  source = gst_element_factory_make ("pipewiresrc", NULL);
+  sink = gst_element_factory_make ("gtk4paintablesink", NULL);
+  if (source == NULL || sink == NULL)
+    {
+      g_warning ("The PipeWire camera GStreamer elements are unavailable");
+      if (source != NULL)
+        gst_object_unref (source);
+      if (sink != NULL)
+        gst_object_unref (sink);
+      close (fd);
+      return NULL;
+    }
+
+  media = g_new0 (PpMedia, 1);
+  media->fd = fd;
+  media->label = g_strdup ("camera");
+  media->player = gst_pipeline_new ("pinpoint-camera");
+  if (g_object_is_floating (media->player))
+    gst_object_ref_sink (media->player);
+  g_object_set (source, "fd", fd, NULL);
+  media->video_sink = gst_object_ref (sink);
+  g_object_get (sink, "paintable", &media->paintable, NULL);
+  gst_bin_add_many (GST_BIN (media->player), source, sink, NULL);
+  if (!gst_element_link (source, sink))
+    {
+      g_warning ("Unable to link the PipeWire camera pipeline");
+      media_free (media);
+      return NULL;
+    }
+
+  if (media->paintable == NULL)
+    {
+      g_warning ("The GTK 4 camera sink did not provide a paintable");
+      media_free (media);
+      return NULL;
+    }
+
+  g_signal_connect_object (media->paintable,
+                           "invalidate-contents",
+                           G_CALLBACK (gtk_widget_queue_draw),
+                           self,
+                           G_CONNECT_SWAPPED);
+  g_signal_connect_object (media->paintable,
+                           "invalidate-size",
+                           G_CALLBACK (gtk_widget_queue_draw),
+                           self,
+                           G_CONNECT_SWAPPED);
+  bus = gst_element_get_bus (media->player);
+  media->bus_watch_id = gst_bus_add_watch (bus, media_bus_cb, media);
+  gst_object_unref (bus);
+  g_hash_table_insert (self->media, g_strdup ("camera"), media);
+  gtk_widget_queue_draw (GTK_WIDGET (self));
+  return media;
+}
+
+static void
+camera_response_cb (GDBusConnection *connection,
+                    const char      *sender_name,
+                    const char      *object_path,
+                    const char      *interface_name,
+                    const char      *signal_name,
+                    GVariant        *parameters,
+                    gpointer         user_data)
+{
+  PpStage *self = user_data;
+  g_autoptr (GVariant) results = NULL;
+  g_autoptr (GVariant) reply = NULL;
+  g_autoptr (GUnixFDList) fd_list = NULL;
+  g_autoptr (GError) error = NULL;
+  guint response;
+  int fd_index;
+  int fd;
+
+  (void) sender_name;
+  (void) object_path;
+  (void) interface_name;
+  (void) signal_name;
+
+  if (self->camera_response_subscription != 0)
+    {
+      g_dbus_connection_signal_unsubscribe (connection,
+                                             self->camera_response_subscription);
+      self->camera_response_subscription = 0;
+    }
+  self->camera_request_pending = FALSE;
+  g_clear_pointer (&self->camera_request_path, g_free);
+  g_variant_get (parameters, "(u@a{sv})", &response, &results);
+  if (response != 0)
+    {
+      if (response != 1)
+        g_warning ("Camera portal request failed with response %u", response);
+      return;
+    }
+
+  reply = g_dbus_connection_call_with_unix_fd_list_sync (
+    connection,
+    PORTAL_BUS_NAME,
+    PORTAL_OBJECT_PATH,
+    CAMERA_INTERFACE,
+    "OpenPipeWireRemote",
+    g_variant_new ("(a{sv})", NULL),
+    G_VARIANT_TYPE ("(h)"),
+    G_DBUS_CALL_FLAGS_NONE,
+    -1,
+    NULL,
+    &fd_list,
+    NULL,
+    &error);
+  if (reply == NULL)
+    {
+      g_warning ("Unable to open the camera PipeWire remote: %s", error->message);
+      return;
+    }
+
+  g_variant_get (reply, "(h)", &fd_index);
+  fd = g_unix_fd_list_get (fd_list, fd_index, &error);
+  if (fd < 0)
+    {
+      g_warning ("Unable to receive the camera PipeWire descriptor: %s",
+                 error->message);
+      return;
+    }
+  create_camera_media (self, fd);
+}
+
+static gboolean
+request_camera_idle_cb (gpointer user_data)
+{
+  PpStage *self = user_data;
+  GtkRoot *root;
+  const PpSlide *slide;
+  g_autoptr (GVariant) reply = NULL;
+  g_autoptr (GError) error = NULL;
+  GVariantBuilder options;
+  const char *unique_name;
+  g_autofree char *sender = NULL;
+  g_autofree char *token = NULL;
+  const char *returned_path;
+
+  self->camera_idle_id = 0;
+  slide = self->presentation != NULL
+    ? pp_presentation_get_slide (self->presentation, self->current_slide)
+    : NULL;
+  if (!self->media_enabled ||
+      slide == NULL ||
+      slide->background_type != PP_BACKGROUND_CAMERA)
+    {
+      self->camera_request_pending = FALSE;
+      return G_SOURCE_REMOVE;
+    }
+
+  root = gtk_widget_get_root (GTK_WIDGET (self));
+  if (GTK_IS_WINDOW (root) && !gtk_window_is_active (GTK_WINDOW (root)))
+    {
+      self->camera_idle_id = g_timeout_add_full (G_PRIORITY_DEFAULT,
+                                                 100,
+                                                 request_camera_idle_cb,
+                                                 g_object_ref (self),
+                                                 g_object_unref);
+      return G_SOURCE_REMOVE;
+    }
+
+  self->camera_request_attempted = TRUE;
+  self->portal_connection = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, &error);
+  if (self->portal_connection == NULL)
+    {
+      g_warning ("Unable to connect to the camera portal: %s", error->message);
+      self->camera_request_pending = FALSE;
+      return G_SOURCE_REMOVE;
+    }
+
+  unique_name = g_dbus_connection_get_unique_name (self->portal_connection);
+  sender = g_strdup (unique_name != NULL && unique_name[0] == ':'
+                       ? unique_name + 1
+                       : "pinpoint");
+  for (char *p = sender; *p != '\0'; p++)
+    if (!g_ascii_isalnum (*p))
+      *p = '_';
+  token = g_strdup_printf ("pinpoint_%08x", g_random_int ());
+  self->camera_request_path = g_strdup_printf (
+    "/org/freedesktop/portal/desktop/request/%s/%s", sender, token);
+  self->camera_response_subscription = g_dbus_connection_signal_subscribe (
+    self->portal_connection,
+    PORTAL_BUS_NAME,
+    REQUEST_INTERFACE,
+    "Response",
+    self->camera_request_path,
+    NULL,
+    G_DBUS_SIGNAL_FLAGS_NONE,
+    camera_response_cb,
+    self,
+    NULL);
+
+  g_variant_builder_init (&options, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add (&options, "{sv}", "handle_token",
+                         g_variant_new_string (token));
+  reply = g_dbus_connection_call_sync (self->portal_connection,
+                                       PORTAL_BUS_NAME,
+                                       PORTAL_OBJECT_PATH,
+                                       CAMERA_INTERFACE,
+                                       "AccessCamera",
+                                       g_variant_new ("(a{sv})", &options),
+                                       G_VARIANT_TYPE ("(o)"),
+                                       G_DBUS_CALL_FLAGS_NONE,
+                                       -1,
+                                       NULL,
+                                       &error);
+  if (reply == NULL)
+    {
+      g_warning ("Unable to request camera access: %s", error->message);
+      g_dbus_connection_signal_unsubscribe (self->portal_connection,
+                                             self->camera_response_subscription);
+      self->camera_response_subscription = 0;
+      self->camera_request_pending = FALSE;
+      g_clear_pointer (&self->camera_request_path, g_free);
+      return G_SOURCE_REMOVE;
+    }
+
+  g_variant_get (reply, "(&o)", &returned_path);
+  if (!g_str_equal (returned_path, self->camera_request_path))
+    g_warning ("Camera portal returned an unexpected request path");
+  return G_SOURCE_REMOVE;
+}
+
+static PpMedia *
+load_camera (PpStage *self)
+{
+  PpMedia *media = g_hash_table_lookup (self->media, "camera");
+
+  if (media == NULL &&
+      !self->camera_request_pending &&
+      !self->camera_request_attempted)
+    {
+      self->camera_request_pending = TRUE;
+      self->camera_idle_id = g_idle_add_full (G_PRIORITY_DEFAULT_IDLE,
+                                              request_camera_idle_cb,
+                                              g_object_ref (self),
+                                              g_object_unref);
+    }
+  return media;
+}
+
+static GdkRGBA
+parse_color (const char    *value,
+             const GdkRGBA *fallback)
+{
+  GdkRGBA color;
+
+  if (value == NULL || !gdk_rgba_parse (&color, value))
+    return *fallback;
+  return color;
+}
+
+static GskRenderNode *
+load_svg_node (PpStage              *self,
+               const PpPresentation *presentation,
+               const PpSlide        *slide,
+               float                 width,
+               float                 height)
+{
+  PpCachedSvg *cached = g_hash_table_lookup (self->svg_nodes, slide);
+  g_autoptr (GFile) file = NULL;
+  RsvgHandle *handle = NULL;
+  g_autoptr (GError) error = NULL;
+  GtkSnapshot *svg_snapshot;
+  GskRenderNode *node;
+  cairo_t *cr;
+  double intrinsic_width = 0.0;
+  double intrinsic_height = 0.0;
+  PpRect rect;
+  graphene_rect_t bounds;
+  RsvgRectangle viewport;
+  gboolean rendered;
+
+  if (cached != NULL && cached->width == width && cached->height == height)
+    return cached->node;
+
+  file = pp_render_resolve_asset (presentation, slide->background);
+  handle = rsvg_handle_new_from_gfile_sync (file,
+                                            RSVG_HANDLE_FLAGS_NONE,
+                                            NULL,
+                                            &error);
+  if (handle == NULL)
+    {
+      g_warning ("Unable to load SVG background: %s", error->message);
+      return NULL;
+    }
+  if (!rsvg_handle_get_intrinsic_size_in_pixels (handle,
+                                                 &intrinsic_width,
+                                                 &intrinsic_height) ||
+      intrinsic_width <= 0.0 || intrinsic_height <= 0.0)
+    {
+      intrinsic_width = width;
+      intrinsic_height = height;
+    }
+  pp_render_get_background_rect (slide,
+                                 width,
+                                 height,
+                                 intrinsic_width,
+                                 intrinsic_height,
+                                 &rect);
+  bounds = GRAPHENE_RECT_INIT (rect.x, rect.y, rect.width, rect.height);
+  viewport = (RsvgRectangle) { 0, 0, intrinsic_width, intrinsic_height };
+  svg_snapshot = gtk_snapshot_new ();
+  cr = gtk_snapshot_append_cairo (svg_snapshot, &bounds);
+  cairo_save (cr);
+  cairo_translate (cr, rect.x, rect.y);
+  cairo_scale (cr,
+               rect.width / intrinsic_width,
+               rect.height / intrinsic_height);
+  rendered = rsvg_handle_render_document (handle, cr, &viewport, &error);
+  cairo_restore (cr);
+  cairo_destroy (cr);
+  node = gtk_snapshot_free_to_node (svg_snapshot);
+  g_clear_object (&handle);
+  if (!rendered)
+    {
+      g_warning ("Unable to render SVG background: %s", error->message);
+      g_clear_pointer (&node, gsk_render_node_unref);
+      return NULL;
+    }
+
+  cached = g_new0 (PpCachedSvg, 1);
+  cached->width = width;
+  cached->height = height;
+  cached->node = node;
+  g_hash_table_replace (self->svg_nodes, (gpointer) slide, cached);
+  return cached->node;
+}
+
+static void
+snapshot_background (PpStage              *self,
+                     GtkSnapshot          *snapshot,
+                     const PpPresentation *presentation,
+                     const PpSlide        *slide,
+                     gboolean              active,
+                     float                 width,
+                     float                 height)
+{
+  static const GdkRGBA black = { 0, 0, 0, 1 };
+  GdkRGBA stage_color = parse_color (slide->stage_color, &black);
+  graphene_rect_t bounds = GRAPHENE_RECT_INIT (0, 0, width, height);
+
+  gtk_snapshot_append_color (snapshot, &stage_color, &bounds);
+
+  if (slide->background_type == PP_BACKGROUND_COLOR)
+    {
+      GdkRGBA background = parse_color (slide->background, &stage_color);
+      gtk_snapshot_append_color (snapshot, &background, &bounds);
+    }
+  else if ((slide->background_type == PP_BACKGROUND_VIDEO ||
+            slide->background_type == PP_BACKGROUND_CAMERA) &&
+           self->media_enabled)
+    {
+      PpMedia *media = slide->background_type == PP_BACKGROUND_CAMERA
+        ? load_camera (self)
+        : load_media (self, presentation, slide->background);
+
+      if (media != NULL)
+        {
+          int intrinsic_width;
+          int intrinsic_height;
+          PpRect rect;
+          graphene_point_t point;
+
+          if (active && !media->playing && !media->failed)
+            {
+              gst_element_set_state (media->player, GST_STATE_PLAYING);
+              media->playing = TRUE;
+            }
+          else if (!active && media->playing)
+            {
+              gst_element_set_state (media->player, GST_STATE_NULL);
+              media->playing = FALSE;
+            }
+
+          intrinsic_width = gdk_paintable_get_intrinsic_width (media->paintable);
+          intrinsic_height = gdk_paintable_get_intrinsic_height (media->paintable);
+          if (intrinsic_width <= 0 || intrinsic_height <= 0)
+            {
+              intrinsic_width = (int) width;
+              intrinsic_height = (int) height;
+            }
+          pp_render_get_background_rect (slide,
+                                         width,
+                                         height,
+                                         intrinsic_width,
+                                         intrinsic_height,
+                                         &rect);
+          gtk_snapshot_push_clip (snapshot, &bounds);
+          gtk_snapshot_save (snapshot);
+          graphene_point_init (&point, rect.x, rect.y);
+          gtk_snapshot_translate (snapshot, &point);
+          gdk_paintable_snapshot (media->paintable,
+                                  GDK_SNAPSHOT (snapshot),
+                                  rect.width,
+                                  rect.height);
+          gtk_snapshot_restore (snapshot);
+          gtk_snapshot_pop (snapshot);
+        }
+    }
+  else if (slide->background_type == PP_BACKGROUND_IMAGE)
+    {
+      GdkTexture *texture = load_texture (self, presentation, slide->background);
+
+      if (texture != NULL)
+        {
+          PpRect rect;
+          graphene_rect_t texture_bounds;
+          GskScalingFilter filter;
+
+          pp_render_get_background_rect (slide,
+                                         width,
+                                         height,
+                                         gdk_texture_get_width (texture),
+                                         gdk_texture_get_height (texture),
+                                         &rect);
+          texture_bounds = GRAPHENE_RECT_INIT (rect.x,
+                                                rect.y,
+                                                rect.width,
+                                                rect.height);
+          filter = rect.width < gdk_texture_get_width (texture) ||
+                   rect.height < gdk_texture_get_height (texture)
+            ? GSK_SCALING_FILTER_TRILINEAR
+            : GSK_SCALING_FILTER_LINEAR;
+          gtk_snapshot_push_clip (snapshot, &bounds);
+          gtk_snapshot_append_scaled_texture (snapshot,
+                                              texture,
+                                              filter,
+                                              &texture_bounds);
+          gtk_snapshot_pop (snapshot);
+        }
+    }
+  else if (slide->background_type == PP_BACKGROUND_SVG)
+    {
+      GskRenderNode *node = load_svg_node (self,
+                                           presentation,
+                                           slide,
+                                           width,
+                                           height);
+
+      if (node != NULL)
+        {
+          gtk_snapshot_push_clip (snapshot, &bounds);
+          gtk_snapshot_append_node (snapshot, node);
+          gtk_snapshot_pop (snapshot);
+        }
+    }
+}
+
+static PangoAlignment
+to_pango_alignment (PpTextAlign alignment)
+{
+  switch (alignment)
+    {
+    case PP_TEXT_ALIGN_CENTER:
+      return PANGO_ALIGN_CENTER;
+    case PP_TEXT_ALIGN_RIGHT:
+      return PANGO_ALIGN_RIGHT;
+    case PP_TEXT_ALIGN_LEFT:
+    default:
+      return PANGO_ALIGN_LEFT;
+    }
+}
+
+static PpCachedText *
+get_cached_text (PpStage       *self,
+                 const PpSlide *slide,
+                 float          width,
+                 float          height)
+{
+  static const GdkRGBA white = { 1, 1, 1, 1 };
+  PpCachedText *cached = g_hash_table_lookup (self->text_nodes, slide);
+  PangoContext *context = gtk_widget_get_pango_context (GTK_WIDGET (self));
+  guint pango_serial = pango_context_get_serial (context);
+  int scale_factor = gtk_widget_get_scale_factor (GTK_WIDGET (self));
+  g_autoptr (PangoLayout) layout = NULL;
+  g_autoptr (PangoFontDescription) description = NULL;
+  PangoRectangle logical;
+  GtkSnapshot *text_snapshot;
+  GdkRGBA text_color;
+  graphene_point_t point;
+  float scale;
+
+  if (cached != NULL && cached->width == width && cached->height == height &&
+      cached->pango_serial == pango_serial &&
+      cached->scale_factor == scale_factor)
+    return cached;
+
+  cached = g_new0 (PpCachedText, 1);
+  cached->width = width;
+  cached->height = height;
+  cached->pango_serial = pango_serial;
+  cached->scale_factor = scale_factor;
+  layout = gtk_widget_create_pango_layout (GTK_WIDGET (self), NULL);
+  description = pango_font_description_from_string (slide->font);
+  pango_layout_set_font_description (layout, description);
+  pango_layout_set_alignment (layout, to_pango_alignment (slide->text_align));
+  if (slide->use_markup)
+    pango_layout_set_markup (layout, slide->text, -1);
+  else
+    pango_layout_set_text (layout, slide->text, -1);
+
+  pango_layout_get_pixel_extents (layout, NULL, &logical);
+  pp_render_get_text_rect (slide,
+                           width,
+                           height,
+                           logical.x + logical.width,
+                           logical.y + logical.height,
+                           &cached->rect,
+                           &scale);
+  text_color = parse_color (slide->text_color, &white);
+
+  text_snapshot = gtk_snapshot_new ();
+  graphene_point_init (&point, cached->rect.x, cached->rect.y);
+  gtk_snapshot_translate (text_snapshot, &point);
+  gtk_snapshot_scale (text_snapshot, scale, scale);
+  gtk_snapshot_append_layout (text_snapshot, layout, &text_color);
+  cached->node = gtk_snapshot_free_to_node (text_snapshot);
+  g_hash_table_replace (self->text_nodes, (gpointer) slide, cached);
+  return cached;
+}
+
+static void
+snapshot_slide (PpStage              *self,
+                GtkSnapshot          *snapshot,
+                const PpPresentation *presentation,
+                const PpSlide        *slide,
+                const TransitionState *transition,
+                gboolean              active,
+                float                 width,
+                float                 height)
+{
+  static const GdkRGBA black = { 0, 0, 0, 1 };
+  PpCachedText *text = NULL;
+  PpRect shading_rect;
+  GdkRGBA shading_color;
+  graphene_rect_t bounds;
+
+  snapshot_layer_begin (snapshot, &transition->actor, width, height);
+
+  snapshot_layer_begin (snapshot, &transition->background, width, height);
+  snapshot_background (self, snapshot, presentation, slide, active, width, height);
+  snapshot_layer_end (snapshot);
+
+  if (slide->text != NULL && *slide->text != '\0')
+    text = get_cached_text (self, slide, width, height);
+
+  if (text != NULL && text->rect.width > 0.0f)
+    {
+      snapshot_layer_begin (snapshot, &transition->midground, width, height);
+      shading_rect = pp_render_get_shading_rect (width, &text->rect);
+      shading_color = parse_color (slide->shading_color, &black);
+      shading_color.alpha *= CLAMP (slide->shading_opacity, 0.0, 1.0);
+      bounds = GRAPHENE_RECT_INIT (shading_rect.x,
+                                   shading_rect.y,
+                                   shading_rect.width,
+                                   shading_rect.height);
+      gtk_snapshot_append_color (snapshot, &shading_color, &bounds);
+      snapshot_layer_end (snapshot);
+    }
+
+  snapshot_layer_begin (snapshot, &transition->foreground, width, height);
+  if (text != NULL && text->node != NULL)
+    gtk_snapshot_append_node (snapshot, text->node);
+  snapshot_layer_end (snapshot);
+
+  snapshot_layer_end (snapshot);
+}
+
+static gboolean
+is_page_curl (const char *name)
+{
+  return g_str_equal (name, "page-curl") ||
+         g_str_equal (name, "page-curl-both");
+}
+
+static gboolean
+uses_page_curl (const PpSlide *slide,
+                gboolean       incoming)
+{
+  return transition_side_enabled (slide, incoming) &&
+         is_page_curl (slide->transition);
+}
+
+static double
+page_curl_period (const char *name,
+                  gboolean    incoming,
+                  gboolean    backwards,
+                  double      progress)
+{
+  if (!is_page_curl (name))
+    return 0.0;
+  if (g_str_equal (name, "page-curl-both"))
+    return incoming ? 1.0 - progress : progress;
+  if (backwards)
+    return incoming ? 1.0 - progress : 0.0;
+  return incoming ? 0.0 : progress;
+}
+
+static GskRenderNode *
+snapshot_slide_to_node (PpStage               *self,
+                        const PpSlide         *slide,
+                        const TransitionState *transition,
+                        gboolean               active,
+                        float                  width,
+                        float                  height,
+                        int                    output_scale)
+{
+  GtkSnapshot *slide_snapshot = gtk_snapshot_new ();
+
+  if (output_scale > 1)
+    gtk_snapshot_scale (slide_snapshot, output_scale, output_scale);
+  snapshot_slide (self,
+                  slide_snapshot,
+                  self->presentation,
+                  slide,
+                  transition,
+                  active,
+                  width,
+                  height);
+  return gtk_snapshot_free_to_node (slide_snapshot);
+}
+
+static void
+snapshot_page_curl_transition (PpStage       *self,
+                               GtkSnapshot   *snapshot,
+                               const PpSlide *previous,
+                               const PpSlide *current,
+                               double         progress,
+                               float          width,
+                               float          height)
+{
+  double previous_progress = pp_transition_apply_easing (
+    previous->transition_easing, progress);
+  double current_progress = pp_transition_apply_easing (
+    current->transition_easing, progress);
+  double previous_period = uses_page_curl (previous, FALSE)
+    ? page_curl_period (previous->transition,
+                        FALSE,
+                        self->backwards,
+                        previous_progress)
+    : 0.0;
+  double current_period = uses_page_curl (current, TRUE)
+    ? page_curl_period (current->transition,
+                        TRUE,
+                        self->backwards,
+                        current_progress)
+    : 0.0;
+  double previous_angle = g_str_equal (previous->transition, "page-curl-both")
+    ? 15.0
+    : 0.0;
+  double current_angle = g_str_equal (current->transition, "page-curl-both")
+    ? 15.0
+    : 0.0;
+  int output_scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
+
+  if (self->curl_previous_texture == NULL ||
+      self->curl_current_texture == NULL ||
+      self->curl_texture_width != width ||
+      self->curl_texture_height != height ||
+      self->curl_texture_scale != output_scale)
+    {
+      GtkNative *native = gtk_widget_get_native (GTK_WIDGET (self));
+      GskRenderer *renderer = native != NULL
+        ? gtk_native_get_renderer (native)
+        : NULL;
+      TransitionState identity = transition_state_identity ();
+      graphene_rect_t viewport = GRAPHENE_RECT_INIT (0,
+                                                      0,
+                                                      width * output_scale,
+                                                      height * output_scale);
+      GskRenderNode *previous_node;
+      GskRenderNode *current_node;
+
+      if (renderer == NULL)
+        return;
+
+      g_clear_object (&self->curl_previous_texture);
+      g_clear_object (&self->curl_current_texture);
+      previous_node = snapshot_slide_to_node (self,
+                                              previous,
+                                              &identity,
+                                              FALSE,
+                                              width,
+                                              height,
+                                              output_scale);
+      current_node = snapshot_slide_to_node (self,
+                                             current,
+                                             &identity,
+                                             TRUE,
+                                             width,
+                                             height,
+                                             output_scale);
+      self->curl_previous_texture = gsk_renderer_render_texture (renderer,
+                                                                 previous_node,
+                                                                 &viewport);
+      self->curl_current_texture = gsk_renderer_render_texture (renderer,
+                                                                current_node,
+                                                                &viewport);
+      self->curl_texture_width = width;
+      self->curl_texture_height = height;
+      self->curl_texture_scale = output_scale;
+      gsk_render_node_unref (previous_node);
+      gsk_render_node_unref (current_node);
+    }
+
+  pp_page_curl_view_set_transition (self->curl_view,
+                                    self->curl_previous_texture,
+                                    self->curl_current_texture,
+                                    previous_period,
+                                    previous_angle,
+                                    current_period,
+                                    current_angle,
+                                    self->backwards);
+  gtk_widget_snapshot_child (GTK_WIDGET (self),
+                             GTK_WIDGET (self->curl_view),
+                             snapshot);
+}
+
+static void
+clear_page_curl (PpStage *self)
+{
+  g_clear_object (&self->curl_previous_texture);
+  g_clear_object (&self->curl_current_texture);
+  self->curl_texture_width = 0.0f;
+  self->curl_texture_height = 0.0f;
+  self->curl_texture_scale = 0;
+  if (self->curl_view != NULL)
+    pp_page_curl_view_clear (self->curl_view);
+}
+
+static gboolean
+tick_cb (GtkWidget     *widget,
+         GdkFrameClock *frame_clock,
+         gpointer       user_data)
+{
+  PpStage *self = PP_STAGE (widget);
+  gint64 elapsed;
+
+  (void) user_data;
+  elapsed = gdk_frame_clock_get_frame_time (frame_clock) - self->transition_started;
+  if (elapsed >= (gint64) self->transition_duration_ms * 1000)
+    {
+      self->transitioning = FALSE;
+      self->tick_id = 0;
+      clear_page_curl (self);
+      gtk_widget_queue_draw (widget);
+      return G_SOURCE_REMOVE;
+    }
+
+  gtk_widget_queue_draw (widget);
+  return G_SOURCE_CONTINUE;
+}
+
+static void
+pp_stage_snapshot (GtkWidget   *widget,
+                   GtkSnapshot *snapshot)
+{
+  PpStage *self = PP_STAGE (widget);
+  float width = gtk_widget_get_width (widget);
+  float height = gtk_widget_get_height (widget);
+  static const GdkRGBA black = { 0, 0, 0, 1 };
+
+  report_render_backend (self);
+
+  if (self->blank || self->presentation == NULL)
+    {
+      graphene_rect_t bounds = GRAPHENE_RECT_INIT (0, 0, width, height);
+      gtk_snapshot_append_color (snapshot, &black, &bounds);
+      return;
+    }
+
+  if (self->transitioning)
+    {
+      GdkFrameClock *clock = gtk_widget_get_frame_clock (widget);
+      gint64 now = clock != NULL ? gdk_frame_clock_get_frame_time (clock) : g_get_monotonic_time ();
+      double progress = (double) (now - self->transition_started) /
+                        ((double) self->transition_duration_ms * 1000.0);
+      const PpSlide *previous = pp_presentation_get_slide (self->presentation,
+                                                           self->previous_slide);
+      const PpSlide *current = pp_presentation_get_slide (self->presentation,
+                                                          self->current_slide);
+      TransitionState outgoing;
+      TransitionState incoming;
+
+      progress = CLAMP (progress, 0.0, 1.0);
+      if (uses_page_curl (previous, FALSE) ||
+          uses_page_curl (current, TRUE))
+        {
+          snapshot_page_curl_transition (self,
+                                         snapshot,
+                                         previous,
+                                         current,
+                                         progress,
+                                         width,
+                                         height);
+          return;
+        }
+      outgoing = calculate_transition (self,
+                                       previous,
+                                       FALSE,
+                                       self->backwards,
+                                       progress);
+      incoming = calculate_transition (self,
+                                       current,
+                                       TRUE,
+                                       self->backwards,
+                                       progress);
+      if (!transition_side_enabled (current, TRUE) &&
+          transition_side_enabled (previous, FALSE))
+        {
+          /* An exit-only transition must remain above the new static slide. */
+          snapshot_slide (self,
+                          snapshot,
+                          self->presentation,
+                          current,
+                          &incoming,
+                          TRUE,
+                          width,
+                          height);
+          snapshot_slide (self,
+                          snapshot,
+                          self->presentation,
+                          previous,
+                          &outgoing,
+                          FALSE,
+                          width,
+                          height);
+        }
+      else
+        {
+          snapshot_slide (self,
+                          snapshot,
+                          self->presentation,
+                          previous,
+                          &outgoing,
+                          FALSE,
+                          width,
+                          height);
+          snapshot_slide (self,
+                          snapshot,
+                          self->presentation,
+                          current,
+                          &incoming,
+                          TRUE,
+                          width,
+                          height);
+        }
+    }
+  else
+    {
+      TransitionState identity = transition_state_identity ();
+      const PpSlide *current = pp_presentation_get_slide (self->presentation,
+                                                          self->current_slide);
+      snapshot_slide (self,
+                      snapshot,
+                      self->presentation,
+                      current,
+                      &identity,
+                      TRUE,
+                      width,
+                      height);
+    }
+}
+
+static void
+pp_stage_size_allocate (GtkWidget *widget,
+                        int        width,
+                        int        height,
+                        int        baseline)
+{
+  PpStage *self = PP_STAGE (widget);
+
+  gtk_widget_allocate (GTK_WIDGET (self->curl_view),
+                       width,
+                       height,
+                       baseline,
+                       NULL);
+}
+
+static void
+pp_stage_dispose (GObject *object)
+{
+  PpStage *self = PP_STAGE (object);
+
+  if (self->tick_id != 0)
+    {
+      gtk_widget_remove_tick_callback (GTK_WIDGET (self), self->tick_id);
+      self->tick_id = 0;
+    }
+  clear_page_curl (self);
+  if (self->camera_idle_id != 0)
+    {
+      g_source_remove (self->camera_idle_id);
+      self->camera_idle_id = 0;
+    }
+  if (self->camera_response_subscription != 0)
+    {
+      if (self->camera_request_path != NULL)
+        g_dbus_connection_call (self->portal_connection,
+                                PORTAL_BUS_NAME,
+                                self->camera_request_path,
+                                REQUEST_INTERFACE,
+                                "Close",
+                                NULL,
+                                NULL,
+                                G_DBUS_CALL_FLAGS_NONE,
+                                -1,
+                                NULL,
+                                NULL,
+                                NULL);
+      g_dbus_connection_signal_unsubscribe (self->portal_connection,
+                                             self->camera_response_subscription);
+      self->camera_response_subscription = 0;
+    }
+  g_clear_pointer (&self->presentation, pp_presentation_free);
+  g_clear_pointer (&self->textures, g_hash_table_unref);
+  g_clear_pointer (&self->text_nodes, g_hash_table_unref);
+  g_clear_pointer (&self->svg_nodes, g_hash_table_unref);
+  g_clear_pointer (&self->media, g_hash_table_unref);
+  g_clear_pointer (&self->legacy_transitions, g_hash_table_unref);
+  g_clear_pointer (&self->failed_transitions, g_hash_table_unref);
+  g_clear_object (&self->portal_connection);
+  g_clear_pointer (&self->camera_request_path, g_free);
+  g_clear_pointer (&self->camera_device, g_free);
+  if (self->curl_view != NULL)
+    {
+      gtk_widget_unparent (GTK_WIDGET (self->curl_view));
+      self->curl_view = NULL;
+    }
+
+  G_OBJECT_CLASS (pp_stage_parent_class)->dispose (object);
+}
+
+static void
+pp_stage_class_init (PpStageClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
+
+  object_class->dispose = pp_stage_dispose;
+  widget_class->size_allocate = pp_stage_size_allocate;
+  widget_class->snapshot = pp_stage_snapshot;
+  gtk_widget_class_set_css_name (widget_class, "pinpoint-stage");
+
+  signals[SLIDE_CHANGED] =
+    g_signal_new ("slide-changed",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL,
+                  NULL,
+                  NULL,
+                  G_TYPE_NONE,
+                  1,
+                  G_TYPE_UINT);
+  signals[PRESENTATION_ENDED] =
+    g_signal_new ("presentation-ended",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL,
+                  NULL,
+                  NULL,
+                  G_TYPE_NONE,
+                  0);
+}
+
+static void
+pp_stage_init (PpStage *self)
+{
+  self->textures = g_hash_table_new_full (g_str_hash,
+                                          g_str_equal,
+                                          g_free,
+                                          g_object_unref);
+  self->text_nodes = g_hash_table_new_full (g_direct_hash,
+                                            g_direct_equal,
+                                            NULL,
+                                            (GDestroyNotify) cached_text_free);
+  self->svg_nodes = g_hash_table_new_full (g_direct_hash,
+                                           g_direct_equal,
+                                           NULL,
+                                           (GDestroyNotify) cached_svg_free);
+  self->media = g_hash_table_new_full (g_str_hash,
+                                       g_str_equal,
+                                       g_free,
+                                       (GDestroyNotify) media_free);
+  self->legacy_transitions = g_hash_table_new_full (
+    g_str_hash,
+    g_str_equal,
+    g_free,
+    (GDestroyNotify) pp_legacy_transition_free);
+  self->failed_transitions = g_hash_table_new_full (g_str_hash,
+                                                     g_str_equal,
+                                                     g_free,
+                                                     NULL);
+  self->curl_view = PP_PAGE_CURL_VIEW (pp_page_curl_view_new ());
+  gtk_widget_set_visible (GTK_WIDGET (self->curl_view), FALSE);
+  gtk_widget_set_parent (GTK_WIDGET (self->curl_view), GTK_WIDGET (self));
+  self->media_enabled = TRUE;
+  self->audio_enabled = TRUE;
+  gtk_widget_set_focusable (GTK_WIDGET (self), TRUE);
+  gtk_widget_set_overflow (GTK_WIDGET (self), GTK_OVERFLOW_HIDDEN);
+}
+
+GtkWidget *
+pp_stage_new (void)
+{
+  return g_object_new (PP_TYPE_STAGE, NULL);
+}
+
+void
+pp_stage_set_presentation (PpStage        *self,
+                           PpPresentation *presentation,
+                           guint           initial_slide)
+{
+  guint count;
+
+  g_return_if_fail (PP_IS_STAGE (self));
+  g_return_if_fail (presentation != NULL);
+
+  count = pp_presentation_get_n_slides (presentation);
+  g_return_if_fail (count > 0);
+
+  if (self->tick_id != 0)
+    {
+      gtk_widget_remove_tick_callback (GTK_WIDGET (self), self->tick_id);
+      self->tick_id = 0;
+    }
+  self->transitioning = FALSE;
+  clear_page_curl (self);
+  stop_all_media (self);
+  g_clear_pointer (&self->presentation, pp_presentation_free);
+  self->presentation = presentation;
+  self->current_slide = MIN (initial_slide, count - 1);
+  self->previous_slide = self->current_slide;
+  g_hash_table_remove_all (self->textures);
+  g_hash_table_remove_all (self->text_nodes);
+  g_hash_table_remove_all (self->svg_nodes);
+  g_hash_table_remove_all (self->media);
+  g_hash_table_remove_all (self->legacy_transitions);
+  g_hash_table_remove_all (self->failed_transitions);
+  gtk_widget_queue_draw (GTK_WIDGET (self));
+  g_signal_emit (self, signals[SLIDE_CHANGED], 0, self->current_slide);
+}
+
+const PpPresentation *
+pp_stage_get_presentation (PpStage *self)
+{
+  g_return_val_if_fail (PP_IS_STAGE (self), NULL);
+  return self->presentation;
+}
+
+guint
+pp_stage_get_current_slide (PpStage *self)
+{
+  g_return_val_if_fail (PP_IS_STAGE (self), 0);
+  return self->current_slide;
+}
+
+static gboolean
+go_to_slide (PpStage  *self,
+             guint     target,
+             gboolean  backwards)
+{
+  const PpSlide *old_slide;
+  const PpSlide *new_slide;
+  GdkFrameClock *clock;
+
+  if (self->presentation == NULL || target == self->current_slide)
+    return FALSE;
+  if (target >= pp_presentation_get_n_slides (self->presentation))
+    return FALSE;
+
+  self->previous_slide = self->current_slide;
+  self->current_slide = target;
+  clear_page_curl (self);
+  stop_all_media (self);
+  self->backwards = backwards;
+  old_slide = pp_presentation_get_slide (self->presentation, self->previous_slide);
+  new_slide = pp_presentation_get_slide (self->presentation, self->current_slide);
+  self->transition_duration_ms = MAX (
+    transition_duration (self,
+                         old_slide,
+                         FALSE,
+                         backwards),
+    transition_duration (self,
+                         new_slide,
+                         TRUE,
+                         backwards));
+  self->transitioning = self->transition_duration_ms > 0;
+  if (uses_page_curl (old_slide, FALSE) || uses_page_curl (new_slide, TRUE))
+    gtk_widget_set_visible (GTK_WIDGET (self->curl_view), TRUE);
+
+  if (self->tick_id != 0)
+    gtk_widget_remove_tick_callback (GTK_WIDGET (self), self->tick_id);
+  self->tick_id = 0;
+
+  if (self->transitioning)
+    {
+      clock = gtk_widget_get_frame_clock (GTK_WIDGET (self));
+      self->transition_started = clock != NULL
+        ? gdk_frame_clock_get_frame_time (clock)
+        : g_get_monotonic_time ();
+      self->tick_id = gtk_widget_add_tick_callback (GTK_WIDGET (self), tick_cb, NULL, NULL);
+    }
+
+  gtk_widget_queue_draw (GTK_WIDGET (self));
+  g_signal_emit (self, signals[SLIDE_CHANGED], 0, self->current_slide);
+  return TRUE;
+}
+
+gboolean
+pp_stage_next (PpStage *self)
+{
+  g_return_val_if_fail (PP_IS_STAGE (self), FALSE);
+  if (self->presentation != NULL &&
+      self->current_slide + 1 >= pp_presentation_get_n_slides (self->presentation))
+    {
+      g_signal_emit (self, signals[PRESENTATION_ENDED], 0);
+      return FALSE;
+    }
+  return go_to_slide (self, self->current_slide + 1, FALSE);
+}
+
+gboolean
+pp_stage_previous (PpStage *self)
+{
+  g_return_val_if_fail (PP_IS_STAGE (self), FALSE);
+  if (self->current_slide == 0)
+    return FALSE;
+  return go_to_slide (self, self->current_slide - 1, TRUE);
+}
+
+void
+pp_stage_first (PpStage *self)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  go_to_slide (self, 0, TRUE);
+}
+
+void
+pp_stage_set_blank (PpStage  *self,
+                    gboolean  blank)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  blank = !!blank;
+  if (self->blank == blank)
+    return;
+  self->blank = blank;
+  gtk_widget_queue_draw (GTK_WIDGET (self));
+}
+
+gboolean
+pp_stage_get_blank (PpStage *self)
+{
+  g_return_val_if_fail (PP_IS_STAGE (self), FALSE);
+  return self->blank;
+}
+
+gboolean
+pp_stage_is_transitioning (PpStage *self)
+{
+  g_return_val_if_fail (PP_IS_STAGE (self), FALSE);
+  return self->transitioning || self->tick_id != 0;
+}
+
+void
+pp_stage_set_media_enabled (PpStage  *self,
+                            gboolean  enabled)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  enabled = !!enabled;
+  if (self->media_enabled == enabled)
+    return;
+  self->media_enabled = enabled;
+  if (!enabled)
+    stop_all_media (self);
+  gtk_widget_queue_draw (GTK_WIDGET (self));
+}
+
+void
+pp_stage_set_audio_enabled (PpStage  *self,
+                            gboolean  enabled)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  enabled = !!enabled;
+  if (self->audio_enabled == enabled)
+    return;
+  self->audio_enabled = enabled;
+  stop_all_media (self);
+  g_hash_table_remove_all (self->media);
+  gtk_widget_queue_draw (GTK_WIDGET (self));
+}
+
+void
+pp_stage_set_camera_device (PpStage    *self,
+                            const char *device)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  g_free (self->camera_device);
+  self->camera_device = g_strdup (device);
+}

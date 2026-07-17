@@ -1,0 +1,5 @@
+# Cairo 1.18.4 records length-bounded Pango glyph text without a trailing NUL.
+# ASan's strict strndup interceptor reports the resulting one-byte read in the
+# SDK library. Keep strict string checks enabled for Pinpoint and suppress only
+# calls passing through Cairo's glyph-subsetting function.
+interceptor_via_fun:_cairo_scaled_font_subsets_map_glyph

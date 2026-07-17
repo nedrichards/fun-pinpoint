@@ -1,0 +1,65 @@
+# Performance and efficiency
+
+Pinpoint keeps repeatable performance, idle-work, and package-size checks in
+the normal GNOME 50 SDK test suite. Synthetic measurements are treated as
+regression gates, not as substitutes for battery and GPU measurements on real
+hardware.
+
+## Automated gates
+
+- Page-curl mesh generation builds 600 curved 1920×1080 frames within 900 ms
+  of CPU time. This allows substantial headroom on slower builders while
+  catching accidental extra deformation, sorting, or allocation work.
+- Completed transitions must remove their GTK frame-clock callback. A static
+  slide therefore has no transition-driven redraw loop.
+- The SDK-built executable, including embedded presentation assets, must remain
+  at or below 3 MiB. The bundled VP9/Opus introduction video has a separate
+  1.4 MiB budget.
+- Renderer pixel checks cover 800×600, 1280×720 widescreen, and 800×600 at 2×
+  scale. They verify stage dimensions, background color, text, shading, and
+  cached vector SVG rendering.
+- AddressSanitizer, UndefinedBehaviorSanitizer, and LeakSanitizer cover parser,
+  media, transition, page-curl, and shutdown lifecycles. Leak suppressions are
+  limited to documented process-lifetime Fontconfig and Mesa EGL display
+  configuration caches.
+
+Run the full display-backed suite inside the pinned SDK:
+
+```sh
+flatpak run --user --filesystem="$PWD" \
+  --device=dri --socket=wayland --socket=fallback-x11 --command=meson \
+  org.gnome.Sdk//50 test -C "$PWD/_build" --print-errorlogs
+```
+
+To print the page-curl timing and current size figures directly:
+
+```sh
+flatpak run --user --filesystem="$PWD" \
+  --command="$PWD/_build/tests/test-performance" org.gnome.Sdk//50 --verbose
+flatpak run --user --filesystem="$PWD" \
+  --command="$PWD/_build/tests/test-size" org.gnome.Sdk//50 \
+  "$PWD/_build/src/pinpoint" "$PWD/data/introduction/bunny.webm" --verbose
+```
+
+`tests/run-leak-checks.sh` still compiles entirely in the GNOME 50 SDK, then
+runs the sanitizer binaries on the host with libraries from that exact SDK so
+LeakSanitizer can inspect them.
+
+See [the Wayland-first rendering pipeline](rendering-pipeline.md) for media
+caps diagnostics, text and image quality choices, and the remaining page-curl
+readback boundary.
+
+## Page-curl work avoided
+
+The renderer deforms each of the 1,089 mesh vertices once and reuses its depth
+when ordering triangles. Rotation sine and cosine are calculated once per
+page, not once per vertex. A flat page uses a static GPU vertex/index mesh, so
+it performs no per-frame deformation, sorting, or buffer upload.
+
+## Hardware release checks
+
+Before a release, profile page-curl frame pacing on representative integrated
+and discrete GPUs and run a long presentation on battery power. Persistent
+mapped GL buffers should only be added if those traces show that the remaining
+single curved-page buffer update is material. Multi-display audience/speaker
+behaviour also remains a physical-hardware release check.

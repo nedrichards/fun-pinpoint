@@ -1,0 +1,39 @@
+{
+  "app-id": "com.nedrichards.pinpoint.Devel",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "50",
+  "sdk": "org.gnome.Sdk",
+  "command": "pinpoint",
+  "rename-desktop-file": "com.nedrichards.pinpoint.desktop",
+  "rename-icon": "com.nedrichards.pinpoint",
+  "rename-appdata-file": "com.nedrichards.pinpoint.metainfo.xml",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--socket=pulseaudio"
+  ],
+  "cleanup": [
+    "/include",
+    "/lib/pkgconfig",
+    "/share/man",
+    "/share/mime/packages/com.nedrichards.pinpoint.xml"
+  ],
+  "modules": [
+    {
+      "name": "pinpoint",
+      "buildsystem": "meson",
+      "config-opts": [
+        "--prefix=/app",
+        "-Dbuildtype=debugoptimized"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": ".."
+        }
+      ]
+    }
+  ]
+}

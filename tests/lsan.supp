@@ -1,0 +1,9 @@
+# Pango's process-wide default font map leaves Fontconfig pattern and
+# configuration caches reachable from PDF text rendering until process exit.
+# Keep these third-party caches out of the application leak regression gate.
+leak:Fc
+
+# Mesa retains the EGL display's driver configuration array until process exit.
+# This is allocated while GTK initializes its Wayland GL renderer and is rooted
+# in Mesa rather than an application-owned allocation.
+leak:_eglCreateArray

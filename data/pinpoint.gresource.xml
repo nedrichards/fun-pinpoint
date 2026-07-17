@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/com/nedrichards/pinpoint/introduction">
+    <file alias="introduction.pin">introduction/introduction.pin</file>
+    <file alias="bg.jpg">introduction/bg.jpg</file>
+    <file alias="bowls.jpg">introduction/bowls.jpg</file>
+    <file alias="linus.jpg">introduction/linus.jpg</file>
+    <file alias="bunny.webm">introduction/bunny.webm</file>
+    <file alias="ORIGIN.md">introduction/ORIGIN.md</file>
+  </gresource>
+</gresources>

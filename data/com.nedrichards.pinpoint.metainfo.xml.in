@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.nedrichards.pinpoint</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LGPL-2.1-or-later</project_license>
+  <name>Pinpoint</name>
+  <summary>Present ideas with clarity</summary>
+  <description>
+    <p>
+      Pinpoint creates image-led presentations from a concise plain-text
+      source format. It keeps the speaker focused on a small amount of text,
+      strong imagery, and the audience.
+    </p>
+    <p>
+      Presentations can use styled text, images, scalable graphics, videos,
+      speaker notes, rehearsed timings, transitions, and live source updates.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.nedrichards.pinpoint.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://dl.flathub.org/media/org/gnome/Pinpoint/aa9580a618997a6f42f4053e04e7f06c/screenshots/image-1_orig.png</image>
+      <caption>An image-led Pinpoint presentation</caption>
+    </screenshot>
+  </screenshots>
+  <branding>
+    <color type="primary" scheme_preference="light">#9141ac</color>
+    <color type="primary" scheme_preference="dark">#613583</color>
+  </branding>
+  <provides>
+    <binary>pinpoint</binary>
+    <mediatype>application/x-pinpoint</mediatype>
+  </provides>
+  <developer id="com.nedrichards">
+    <name>Nick Richards</name>
+  </developer>
+  <url type="homepage">https://github.com/nedrichards/fun-pinpoint</url>
+  <url type="bugtracker">https://github.com/nedrichards/fun-pinpoint/issues</url>
+  <url type="vcs-browser">https://github.com/nedrichards/fun-pinpoint</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="2026-07-14">
+      <description>
+        <p>Rebuilt on GTK 4 while retaining the Pinpoint presentation format.</p>
+      </description>
+    </release>
+  </releases>
+</component>
