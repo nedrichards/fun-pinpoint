@@ -155,13 +155,21 @@ files, and asset subdirectories.
 Background classification follows these rules in order:
 
 1. `camera`, matched without regard to case, requests the camera portal.
-2. `.avi`, `.ogg`, `.ogv`, `.mpg`, `.flv`, `.mpeg`, `.mov`, `.mp4`, `.wmv`,
-   `.webm`, `.mkv`, `.3gp`, and `.gif` are treated as video.
-3. `.svg` is rendered as scalable artwork.
-4. A valid GTK color is rendered as a solid color.
+2. A valid GTK color is rendered as a solid color.
+3. Existing local assets are identified from a small content sample using
+   GLib's shared content-type database.
+4. Missing or not-yet-created assets use the filename's system content type,
+   followed by a case-insensitive compatibility suffix list.
 5. Everything else is treated as an image filename.
 
-Video and SVG suffix checks are case-sensitive for compatibility with 0.1.8.
+The fallback retains `.avi`, `.ogg`, `.ogv`, `.mpg`, `.flv`, `.mpeg`, `.mov`,
+`.mp4`, `.wmv`, `.webm`, `.mkv`, `.3gp`, and `.gif` from 0.1.8, and adds
+`.m4v`, `.ts`, `.mts`, `.m2ts`, `.m2v`, `.mxf`, `.vob`, and `.m3u8`. SVG and
+video recognition is case-insensitive. Only a deliberately portable subset of
+recognized video is release-tested; see the
+[supported media formats](media-formats.md) for the exact container, codec,
+profile, colour, and audio contract.
+
 When exporting a video-backed slide to PDF, Pinpoint samples at most four
 frames under fixed decode timeouts and chooses the strongest non-black,
 non-uniform candidate by contrast and visual detail. The result is cached for
@@ -333,12 +341,11 @@ comment-derived notes.
   are configuration; brackets in slide text are audience text.
 - Settings are applied in order, and later settings win.
 - Unknown settings become the background.
-- Media and SVG suffix matching is case-sensitive.
+- Existing media is content-sniffed; filename fallback is case-insensitive.
 - Speaker-note lines must begin with `#` in the first column.
 - Background `top` and `bottom` alignment retain the 0.1.8 omission.
 - Commands run inside the Flatpak sandbox.
 
 These rules are intentional compatibility behavior, not recommendations for
-new files. New presentations should use `--` separators, lowercase media
-suffixes, explicit setting names where available, and assets stored beside the
-presentation.
+new files. New presentations should use `--` separators, explicit setting
+names where available, and assets stored beside the presentation.

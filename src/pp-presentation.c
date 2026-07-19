@@ -296,22 +296,118 @@ parse_config (PpSlide    *slide,
 }
 
 static gboolean
+has_suffix (const char *filename,
+            const char *suffix)
+{
+  gsize filename_length = strlen (filename);
+  gsize suffix_length = strlen (suffix);
+
+  return filename_length >= suffix_length &&
+         g_ascii_strcasecmp (filename + filename_length - suffix_length,
+                             suffix) == 0;
+}
+
+static gboolean
 has_video_suffix (const char *filename)
 {
   static const char *const suffixes[] = {
     ".avi", ".ogg", ".ogv", ".mpg", ".flv", ".mpeg", ".mov", ".mp4",
-    ".wmv", ".webm", ".mkv", ".3gp", ".gif", NULL
+    ".m4v", ".wmv", ".webm", ".mkv", ".3gp", ".gif", ".ts", ".mts",
+    ".m2ts", ".m2v", ".mxf", ".vob", ".m3u8", NULL
   };
+
   for (guint i = 0; suffixes[i] != NULL; i++)
-    if (g_str_has_suffix (filename, suffixes[i]))
+    if (has_suffix (filename, suffixes[i]))
       return TRUE;
 
   return FALSE;
 }
 
-static void
-classify_background (PpSlide *slide)
+static GFile *
+resolve_background_file (PpPresentation *presentation,
+                         const char     *background)
 {
+  g_autofree char *scheme = NULL;
+  g_autoptr (GFile) parent = NULL;
+
+  scheme = g_uri_parse_scheme (background);
+  if (scheme != NULL)
+    {
+      if (g_str_equal (scheme, "file"))
+        return g_file_new_for_uri (background);
+      return NULL;
+    }
+
+  if (g_path_is_absolute (background))
+    return g_file_new_for_path (background);
+  if (presentation->file == NULL)
+    return g_file_new_for_path (background);
+
+  parent = g_file_get_parent (presentation->file);
+  if (parent == NULL)
+    return g_file_new_for_path (background);
+  return g_file_resolve_relative_path (parent, background);
+}
+
+static char *
+guess_background_content_type (PpPresentation *presentation,
+                               const char     *background)
+{
+  guint8 prefix[4096];
+  g_autoptr (GFile) file = resolve_background_file (presentation, background);
+  g_autoptr (GFileInputStream) stream = NULL;
+  gboolean uncertain = TRUE;
+  gssize length = 0;
+  char *content_type = NULL;
+
+  if (file != NULL)
+    {
+      stream = g_file_read (file, NULL, NULL);
+      if (stream != NULL)
+        length = g_input_stream_read (G_INPUT_STREAM (stream),
+                                      prefix,
+                                      sizeof prefix,
+                                      NULL,
+                                      NULL);
+    }
+
+  if (length > 0)
+    content_type = g_content_type_guess (NULL,
+                                         prefix,
+                                         (gsize) length,
+                                         &uncertain);
+  if (content_type != NULL && !uncertain)
+    return content_type;
+
+  g_clear_pointer (&content_type, g_free);
+  return g_content_type_guess (background, NULL, 0, &uncertain);
+}
+
+static gboolean
+content_type_is_video (const char *content_type)
+{
+  g_autofree char *mime_type = NULL;
+
+  if (content_type == NULL)
+    return FALSE;
+  mime_type = g_content_type_get_mime_type (content_type);
+  if (mime_type == NULL)
+    return FALSE;
+
+  return g_str_has_prefix (mime_type, "video/") ||
+         g_str_equal (mime_type, "image/gif") ||
+         g_str_equal (mime_type, "application/ogg") ||
+         g_str_equal (mime_type, "application/mxf") ||
+         g_str_equal (mime_type, "application/vnd.apple.mpegurl") ||
+         g_str_equal (mime_type, "application/x-mpegurl");
+}
+
+static void
+classify_background (PpPresentation *presentation,
+                     PpSlide        *slide)
+{
+  g_autofree char *content_type = NULL;
+  g_autofree char *mime_type = NULL;
   GdkRGBA color;
 
   if (slide->background == NULL || *slide->background == '\0')
@@ -322,14 +418,24 @@ classify_background (PpSlide *slide)
 
   if (g_ascii_strcasecmp (slide->background, "camera") == 0)
     slide->background_type = PP_BACKGROUND_CAMERA;
-  else if (has_video_suffix (slide->background))
-    slide->background_type = PP_BACKGROUND_VIDEO;
-  else if (g_str_has_suffix (slide->background, ".svg"))
-    slide->background_type = PP_BACKGROUND_SVG;
   else if (gdk_rgba_parse (&color, slide->background))
     slide->background_type = PP_BACKGROUND_COLOR;
   else
-    slide->background_type = PP_BACKGROUND_IMAGE;
+    {
+      content_type = guess_background_content_type (presentation,
+                                                     slide->background);
+      if (content_type != NULL)
+        mime_type = g_content_type_get_mime_type (content_type);
+
+      if (g_strcmp0 (mime_type, "image/svg+xml") == 0 ||
+          has_suffix (slide->background, ".svg"))
+        slide->background_type = PP_BACKGROUND_SVG;
+      else if (content_type_is_video (content_type) ||
+               has_video_suffix (slide->background))
+        slide->background_type = PP_BACKGROUND_VIDEO;
+      else
+        slide->background_type = PP_BACKGROUND_IMAGE;
+    }
 }
 
 static void
@@ -350,7 +456,7 @@ finish_slide (PpPresentation *presentation,
   slide->text = g_strndup (text->str + start, end - start);
   if (notes->len > 0)
     replace_string (&slide->speaker_notes, notes->str);
-  classify_background (slide);
+  classify_background (presentation, slide);
   g_ptr_array_add (presentation->slides, slide);
 }
 

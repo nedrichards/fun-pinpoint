@@ -42,7 +42,9 @@ page-curl test also requires the explicitly granted GPU device. Without a
 display they report a skip. See [performance and efficiency](docs/performance.md)
 for the budgets and a display-enabled command, and see the
 [Wayland-first rendering pipeline](docs/rendering-pipeline.md) for video,
-camera, image, SVG, text, colour, and hardware-acceleration details.
+camera, image, SVG, text, colour, and hardware-acceleration details. The
+[media-format policy](docs/media-formats.md) defines the portable video and
+audio combinations covered by the production Flatpak and its fixtures.
 
 ### Sanitizers and leak detection
 

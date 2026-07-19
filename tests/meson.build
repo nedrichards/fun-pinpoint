@@ -21,6 +21,30 @@ test(
   timeout: 10,
 )
 
+media_formats_test = executable(
+  'test-media-formats',
+  'test-media-formats.c',
+  dependencies: [glib_dep, gio_dep, gstreamer_dep, gstreamer_pbutils_dep],
+)
+
+test(
+  'media-formats',
+  media_formats_test,
+  args: [
+    files('../data/introduction/bunny.webm'),
+    files('fixtures/media-formats/pinpoint-vp8-vorbis.webm'),
+    files('fixtures/media-formats/pinpoint-h264-baseline-aac.mp4'),
+    files('fixtures/media-formats/pinpoint-h264-main.mov'),
+    files('fixtures/media-formats/pinpoint-h264-high.mp4'),
+    files('fixtures/media-formats/pinpoint-theora-vorbis.ogv'),
+    files('fixtures/media-formats/pinpoint-animated.gif'),
+    files('fixtures/media-formats/pinpoint-av1-opus.webm'),
+    files('fixtures/media-formats/pinpoint-av1-aac.mp4'),
+    files('fixtures/media-formats/corrupt.mp4'),
+  ],
+  timeout: 30,
+)
+
 size_test = executable(
   'test-size',
   'test-size.c',
@@ -48,6 +72,8 @@ test(
     'fixtures/page-curl.pin',
     'fixtures/multi-monitor.pin',
     'fixtures/camera.pin',
+    'fixtures/media-formats.pin',
+    'fixtures/corrupt-video.pin',
   ),
   is_parallel: false,
   timeout: 30,

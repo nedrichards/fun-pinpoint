@@ -15,6 +15,8 @@ static const char *native_transition_fixture_path;
 static const char *page_curl_fixture_path;
 static const char *multi_monitor_fixture_path;
 static const char *camera_fixture_path;
+static const char *media_formats_fixture_path;
+static const char *corrupt_video_fixture_path;
 
 static void
 swap_displays_requested_cb (PpSpeaker *speaker,
@@ -522,11 +524,11 @@ test_media_and_camera_file_descriptor_stability (void)
 }
 
 static void
-test_missing_video_fails_once_and_tears_down (void)
+exercise_failed_video (const char *path,
+                       const char *application_id)
 {
-  g_autoptr (GtkApplication) application = create_application (
-    "com.nedrichards.pinpoint.LifecycleMediaTest");
-  g_autoptr (GFile) file = g_file_new_for_path (fixture_path);
+  g_autoptr (GtkApplication) application = create_application (application_id);
+  g_autoptr (GFile) file = g_file_new_for_path (path);
   g_autoptr (PpPresentation) presentation = NULL;
   g_autoptr (GError) error = NULL;
   GtkWindow *window = GTK_WINDOW (gtk_application_window_new (application));
@@ -544,6 +546,20 @@ test_missing_video_fails_once_and_tears_down (void)
   run_loop_for (750);
   gtk_window_destroy (window);
   run_loop_for (100);
+}
+
+static void
+test_missing_video_fails_once_and_tears_down (void)
+{
+  exercise_failed_video (fixture_path,
+                         "com.nedrichards.pinpoint.LifecycleMissingMediaTest");
+}
+
+static void
+test_corrupt_video_fails_once_and_tears_down (void)
+{
+  exercise_failed_video (corrupt_video_fixture_path,
+                         "com.nedrichards.pinpoint.LifecycleCorruptMediaTest");
 }
 
 static void
@@ -568,6 +584,35 @@ test_bundled_introduction_video_lifecycle (void)
 
   gtk_window_present (window);
   run_loop_for (1250);
+  gtk_window_destroy (window);
+  run_loop_for (150);
+}
+
+static void
+test_supported_media_matrix (void)
+{
+  g_autoptr (GtkApplication) application = create_application (
+    "com.nedrichards.pinpoint.LifecycleMediaFormatsTest");
+  g_autoptr (PpPresentation) presentation = load_fixture (
+    media_formats_fixture_path);
+  GtkWindow *window = GTK_WINDOW (gtk_application_window_new (application));
+  GtkWidget *stage = pp_stage_new ();
+  guint warnings_before = media_warning_count;
+  guint slide_count = pp_presentation_get_n_slides (presentation);
+
+  pp_stage_set_audio_enabled (PP_STAGE (stage), FALSE);
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             g_steal_pointer (&presentation),
+                             0);
+  gtk_window_set_child (window, stage);
+  gtk_window_present (window);
+  for (guint i = 0; i < slide_count; i++)
+    {
+      run_loop_for (350);
+      if (i + 1 < slide_count)
+        g_assert_true (pp_stage_next (PP_STAGE (stage)));
+    }
+  g_assert_cmpuint (media_warning_count, ==, warnings_before);
   gtk_window_destroy (window);
   run_loop_for (150);
 }
@@ -664,7 +709,7 @@ int
 main (int   argc,
       char *argv[])
 {
-  if (argc != 7)
+  if (argc != 9)
     return EXIT_FAILURE;
   fixture_path = argv[1];
   transition_fixture_path = argv[2];
@@ -672,6 +717,8 @@ main (int   argc,
   page_curl_fixture_path = argv[4];
   multi_monitor_fixture_path = argv[5];
   camera_fixture_path = argv[6];
+  media_formats_fixture_path = argv[7];
+  corrupt_video_fixture_path = argv[8];
   g_log_set_writer_func (test_log_writer, NULL, NULL);
   gst_init (NULL, NULL);
   if (!gtk_init_check ())
@@ -685,14 +732,16 @@ main (int   argc,
   test_dispose_queued_camera_request ();
   test_media_and_camera_file_descriptor_stability ();
   test_missing_video_fails_once_and_tears_down ();
+  test_corrupt_video_fails_once_and_tears_down ();
   test_bundled_introduction_video_lifecycle ();
+  test_supported_media_matrix ();
   test_legacy_transition_lifecycle ();
   test_page_curl_gl_render ();
   test_page_curl_lifecycle ();
   test_native_transition_lifecycle ();
-  if (media_warning_count != 1)
+  if (media_warning_count != 2)
     {
-      g_printerr ("Expected one missing-video warning, received %u\n",
+      g_printerr ("Expected two failed-video warnings, received %u\n",
                   media_warning_count);
       return EXIT_FAILURE;
     }

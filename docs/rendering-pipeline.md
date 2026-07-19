@@ -41,6 +41,11 @@ kept VA-API decoding but negotiated system-memory NV12 through
 `GskGLRenderer`. These observations prove both paths on that machine; they are
 not hard-coded requirements for other drivers.
 
+The portable input contract is intentionally narrower than all formats which
+GStreamer may decode. See [supported media formats](media-formats.md) for the
+tested containers, codecs, profiles, SDR colour layouts, and base-runtime
+fallback requirement.
+
 ### Still images and SVG
 
 Raster images are loaded once as immutable `GdkTexture` objects and cached for
@@ -113,8 +118,9 @@ On representative Wayland hardware:
 
 1. Confirm the log names `GdkWaylandDisplay` and the expected Vulkan or GL GSK
    renderer.
-2. Exercise VP9/Opus, H.264/AAC, camera, large JPEG/PNG, SVG, marked-up text,
-   and page curl at 1× and 2× scale.
+2. Run the automated media-format matrix, then exercise AV1/Opus, AV1/AAC,
+   VP9/Opus, H.264/AAC, camera, large JPEG/PNG, SVG, marked-up text, and page
+   curl at 1× and 2× scale.
 3. Record negotiated caps and selected decoder elements; compare DMA-BUF or GL
    paths with the deliberate system-memory fallback.
 4. Check text edges, SVG curves, image minification, colour and video levels on

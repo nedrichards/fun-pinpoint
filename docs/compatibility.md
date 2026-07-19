@@ -26,6 +26,10 @@ fixes.
   mesh and vertex-lighting equation. Mesh depth is reused for triangle order,
   page rotation is precomputed once, and flat pages use a static GPU mesh
 - GStreamer video backgrounds using `playbin3` and `gtk4paintablesink`
+- A production-runtime media contract covering WebM VP8/VP9/AV1 Main,
+  MP4 AV1 Main, MP4/MOV H.264 Baseline/Main/High, Ogg Theora, animated GIF,
+  Opus/Vorbis/AAC-LC audio, conventional 8-bit 4:2:0 SDR colour, and
+  deterministic corrupt-file rejection
 - Bounded best-frame GStreamer video thumbnails in PDF output. Up to four
   candidates are scored for contrast and edge detail, black or flat candidates
   are rejected, and the selected frame is cached per video while retaining the
@@ -105,7 +109,9 @@ built-in panel and a 3840×2560 external panel, both using fractional scaling:
 ## Deliberately retained historical behavior
 
 - Any unrecognized bracketed setting becomes the slide background.
-- Media and SVG filename suffix matching remains case-sensitive.
+- Every historical media suffix remains accepted. Existing assets additionally
+  use content sniffing, while filename fallback is case-insensitive and covers
+  common modern video containers.
 - A leading hyphen starts a slide separator unless escaped.
 - Background `top` and `bottom` alignment retain the 0.1.8 parser omission;
   corner alignments work as before.

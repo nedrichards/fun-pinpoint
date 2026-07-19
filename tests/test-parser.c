@@ -89,29 +89,114 @@ test_invalid_source (void)
 }
 
 static void
-test_background_suffix_case (void)
+test_historical_video_suffixes (void)
+{
+  static const char *const suffixes[] = {
+    "avi", "ogg", "ogv", "mpg", "flv", "mpeg", "mov", "mp4", "wmv",
+    "webm", "mkv", "3gp", "gif",
+  };
+  g_autoptr (GString) source = g_string_new (NULL);
+  g_autoptr (PpPresentation) presentation = NULL;
+
+  for (guint i = 0; i < G_N_ELEMENTS (suffixes); i++)
+    g_string_append_printf (source, "-- [movie.%s]\nVideo\n", suffixes[i]);
+
+  presentation = pp_presentation_parse (source->str, NULL, FALSE, NULL);
+  g_assert_nonnull (presentation);
+  g_assert_cmpuint (pp_presentation_get_n_slides (presentation),
+                    ==,
+                    G_N_ELEMENTS (suffixes));
+  for (guint i = 0; i < G_N_ELEMENTS (suffixes); i++)
+    g_assert_cmpint (pp_presentation_get_slide (presentation, i)->background_type,
+                     ==,
+                     PP_BACKGROUND_VIDEO);
+}
+
+static void
+test_background_type_detection (void)
 {
   const char *source =
     "-- [movie.mp4]\nvideo\n"
-    "-- [movie.MP4]\nimage\n"
+    "-- [movie.MP4]\nvideo uppercase\n"
     "-- [art.svg]\nsvg\n"
-    "-- [art.SVG]\nimage\n";
+    "-- [art.SVG]\nsvg uppercase\n"
+    "-- [movie.m4v]\nM4V\n"
+    "-- [camera.mts]\nMTS\n"
+    "-- [camera.m2ts]\nM2TS\n"
+    "-- [capture.ts]\nTS\n"
+    "-- [edit.mxf]\nMXF\n"
+    "-- [stream.m2v]\nM2V\n"
+    "-- [disc.vob]\nVOB\n"
+    "-- [playlist.m3u8]\nHLS\n"
+    "-- [photo.webp]\nimage\n";
   g_autoptr (PpPresentation) presentation = NULL;
 
   presentation = pp_presentation_parse (source, NULL, FALSE, NULL);
   g_assert_nonnull (presentation);
+  g_assert_cmpuint (pp_presentation_get_n_slides (presentation), ==, 13);
   g_assert_cmpint (pp_presentation_get_slide (presentation, 0)->background_type,
                    ==,
                    PP_BACKGROUND_VIDEO);
   g_assert_cmpint (pp_presentation_get_slide (presentation, 1)->background_type,
                    ==,
-                   PP_BACKGROUND_IMAGE);
+                   PP_BACKGROUND_VIDEO);
   g_assert_cmpint (pp_presentation_get_slide (presentation, 2)->background_type,
                    ==,
                    PP_BACKGROUND_SVG);
   g_assert_cmpint (pp_presentation_get_slide (presentation, 3)->background_type,
                    ==,
+                   PP_BACKGROUND_SVG);
+  for (guint i = 4; i <= 11; i++)
+    g_assert_cmpint (pp_presentation_get_slide (presentation, i)->background_type,
+                     ==,
+                     PP_BACKGROUND_VIDEO);
+  g_assert_cmpint (pp_presentation_get_slide (presentation, 12)->background_type,
+                   ==,
                    PP_BACKGROUND_IMAGE);
+}
+
+static void
+test_background_content_sniffing (void)
+{
+  g_autofree char *fixtures = g_path_get_dirname (fixture_path);
+  g_autofree char *source_path = g_build_filename (fixtures,
+                                                   "media-formats",
+                                                   "pinpoint-h264-high.mp4",
+                                                   NULL);
+  g_autofree char *temporary_path = NULL;
+  g_autofree char *video_path = NULL;
+  g_autofree char *presentation_path = NULL;
+  g_autofree char *contents = NULL;
+  gsize length = 0;
+  g_autoptr (GFile) file = NULL;
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GError) error = NULL;
+
+  g_assert_true (g_file_get_contents (source_path, &contents, &length, &error));
+  g_assert_no_error (error);
+  temporary_path = g_dir_make_tmp ("pinpoint-content-type-XXXXXX", &error);
+  g_assert_no_error (error);
+  video_path = g_build_filename (temporary_path, "extensionless-media", NULL);
+  presentation_path = g_build_filename (temporary_path, "talk.pin", NULL);
+  g_assert_true (g_file_set_contents (video_path, contents, length, &error));
+  g_assert_no_error (error);
+  g_assert_true (g_file_set_contents (presentation_path,
+                                      "-- [extensionless-media]\nVideo\n",
+                                      -1,
+                                      &error));
+  g_assert_no_error (error);
+
+  file = g_file_new_for_path (presentation_path);
+  presentation = pp_presentation_load (file, FALSE, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (presentation);
+  g_assert_cmpint (pp_presentation_get_slide (presentation, 0)->background_type,
+                   ==,
+                   PP_BACKGROUND_VIDEO);
+
+  g_assert_cmpint (g_remove (presentation_path), ==, 0);
+  g_assert_cmpint (g_remove (video_path), ==, 0);
+  g_assert_cmpint (g_rmdir (temporary_path), ==, 0);
 }
 
 static void
@@ -1284,7 +1369,12 @@ main (int   argc,
   g_test_add_func ("/parser/compatibility", test_compatibility_fixture);
   g_test_add_func ("/parser/ignore-comments", test_ignore_comments);
   g_test_add_func ("/parser/invalid-source", test_invalid_source);
-  g_test_add_func ("/parser/background-suffix-case", test_background_suffix_case);
+  g_test_add_func ("/parser/historical-video-suffixes",
+                   test_historical_video_suffixes);
+  g_test_add_func ("/parser/background-type-detection",
+                   test_background_type_detection);
+  g_test_add_func ("/parser/background-content-sniffing",
+                   test_background_content_sniffing);
   g_test_add_func ("/parser/first-changed-slide", test_first_changed_slide);
   g_test_add_func ("/parser/rehearsal-serialization", test_rehearsal_serialization);
   g_test_add_func ("/parser/native-transition-settings",

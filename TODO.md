@@ -22,12 +22,16 @@
   frame. PDF export samples at most four candidates under fixed decode
   timeouts, rejects black or nearly uniform frames, scores contrast and visual
   detail, retains a safe fallback, and caches one result per video URI.
-- [ ] Review and define the acceptable video-format set. Test the containers,
+- [x] Review and define the acceptable video-format set. Test the containers,
   video codecs, audio codecs, colour formats, and common profile variants that
   the GNOME runtime can reliably decode; distinguish formats Pinpoint supports
   deliberately from those that merely happen to work through locally installed
-  GStreamer plugins, then document the result and retain representative test
-  fixtures for supported and gracefully rejected inputs.
+  GStreamer plugins. The production-runtime contract now covers WebM
+  VP8/VP9/AV1 Main, MP4 AV1 Main, MP4/MOV H.264 Constrained
+  Baseline/Main/High, Ogg Theora, animated GIF, Opus/Vorbis/AAC-LC, and
+  conventional 8-bit 4:2:0 BT.601/BT.709 SDR. Synthetic accepted fixtures and
+  a corrupt MP4 rejection fixture are retained and tested independently of
+  host plugins and optional Flatpak codec extensions.
 - [x] Audit the media and rendering pipeline for Wayland-first hardware
   acceleration and output quality. Video now exposes its negotiated caps and
   selected elements, the camera can negotiate PipeWire directly with the GTK
