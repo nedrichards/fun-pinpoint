@@ -1,0 +1,6 @@
+option(
+  'remote_prototypes',
+  type: 'boolean',
+  value: false,
+  description: 'Build non-installed remote-control protocol prototypes',
+)

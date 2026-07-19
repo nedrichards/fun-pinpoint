@@ -58,22 +58,29 @@ after Pinpoint exits.
 Pass `PINPOINT_FLATPAK_ID=com.nedrichards.pinpoint.Devel` to run the same gate
 against an installed development Flatpak instead of the SDK-built host binary.
 
-## Adapters to prototype
+## Prototype results
 
-The shared actions deliberately do not choose a transport. The next stage will
-evaluate each adapter independently:
+The shared actions deliberately do not choose a transport. Isolated prototypes
+under `prototypes/` produced these results:
 
-1. A per-process local D-Bus action group for trusted scripts and accessibility
-   tools. Its instance identity must preserve Pinpoint's multi-process model.
-2. MPRIS `Next` and `Previous`, with slide position as metadata. `PlayPause`
-   must remain unavailable unless it can truthfully represent the rehearsal or
-   autoadvance timer; it must never mean blank screen.
-3. A peer Varlink API using the same commands. Varlink describes typed calls
-   over a supplied `GIOStream`; discovery, authentication, encryption, and
-   pairing remain separate transport policy.
-4. An opt-in local peer session suitable for a phone. A credible design needs
-   an ephemeral pairing secret, an explicit start/stop lifecycle, no file or
-   command surface, and revocation when presenting ends.
+1. A standard `org.gtk.Actions` group works on a per-process D-Bus name and
+   exposes the action model without another command implementation. Two
+   simultaneous processes retain distinct names. This is the strongest local
+   automation candidate, subject to production Flatpak and assistive-client
+   proof.
+2. MPRIS `Next` and `Previous` can represent slide navigation and slide
+   position can be metadata. The prototype truthfully reports `Stopped` and
+   rejects `PlayPause`, pause, seek, and volume. This may make some media
+   clients hide it, which is preferable to claiming false playback semantics.
+3. The peer Varlink schema maps cleanly onto the same state and commands and
+   generates typed C bindings. `varlink-glib` describes calls over a supplied
+   `GIOStream`; it does not provide pairing, authentication, encryption, or
+   network discovery.
+4. `librebonjour` builds in the GNOME 50 SDK and could advertise or discover an
+   opt-in local service. The current `varlink-glib` alpha does not build against
+   the SDK's libdex 1.1 without bundling current libdex 1.2.beta. This is a
+   concrete cost against adopting that stack now, not a problem with the
+   transport-neutral interface design.
 
 Current GNOME-community experiments make the third and fourth options worth a
 bounded spike. `varlink-glib` provides generated asynchronous C APIs over an
@@ -87,9 +94,36 @@ host-policy and Flatpak implications:
 - https://valent.andyholmes.ca/documentation/protocol.html
 
 Valent and the KDE Connect protocol are also important comparison points: they
-already combine paired devices, presentation input, and MPRIS bridging. A
-Pinpoint-specific peer protocol should only be pursued if those existing paths
-cannot provide a reliable, understandable presentation remote.
+already combine paired devices, presentation input, and MPRIS bridging. Neither
+Valent, GSConnect, nor a generic MPRIS client was installed for this spike, so a
+Pinpoint-specific peer protocol should not be selected until those existing
+paths have been tested with real phone and desktop clients.
+
+## P2P architecture boundary
+
+A credible future phone path is a composition, not a single protocol:
+
+1. Presentation mode explicitly creates a short-lived remote session.
+2. Pinpoint displays a QR code or short phrase carrying an endpoint identifier,
+   an ephemeral secret, and protocol version. The secret must not be placed in
+   DNS-SD metadata.
+3. The peer proves possession of that secret while establishing an encrypted,
+   authenticated stream. DNS-SD can make the endpoint easier to find, but is
+   never the trust decision.
+4. The Varlink control interface runs over that already-secure `GIOStream`.
+   It offers only presentation state and bounded presentation commands.
+5. Leaving presentation mode closes the listener and every peer connection;
+   starting again creates fresh credentials.
+
+A browser remote would require a browser-compatible secure transport and a
+small bridge because browsers cannot connect to an arbitrary raw `GIOStream`.
+An Android/Valent client or a separate companion process is a more natural
+first peer. A companion could own network discovery and pairing while talking
+to Pinpoint through its local per-instance D-Bus API, keeping broad network and
+system-bus permissions out of the lean presenter Flatpak. That separation is
+worth testing before any manifest permissions are added.
+
+The reproducible build notes and commands are in `prototypes/README.md`.
 
 ## Decision gates
 
@@ -102,3 +136,7 @@ An adapter is suitable for production only if it:
 - remains offline-capable with predictable latency;
 - fails closed when presentation display mode ends; and
 - can be exercised by automated protocol tests plus a real client.
+
+The prototypes satisfy the automated command, state, and multi-instance parts.
+They do not yet satisfy real-client, production-Flatpak, pairing, or permission
+proof, so no adapter has been selected for production.

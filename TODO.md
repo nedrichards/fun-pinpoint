@@ -76,15 +76,22 @@
   model. Presentation display mode owns exactly one idle inhibitor whether
   windowed or fullscreen; the live GNOME gate verifies flag `8`, stable
   ownership, and release on exit.
-- [ ] Prototype remote-control adapters before choosing one for production.
-  Compare per-instance D-Bus actions, MPRIS, and a peer Varlink API; evaluate
-  Valent/KDE Connect as an existing phone and presentation-control ecosystem.
-  For a future opt-in P2P path, investigate `varlink-glib` over an authenticated
-  `GIOStream` and `librebonjour` discovery without confusing discovery with
-  pairing or granting network access by default. Keep MPRIS play/pause disabled
-  unless it truthfully represents the presentation timer, preserve independent
-  simultaneous Pinpoint processes, and require explicit lifecycle, revocation,
-  Flatpak-permission, and real-client proof before selecting an adapter.
+- [x] Build isolated remote-control prototypes without selecting a production
+  adapter. Per-instance D-Bus actions and conservative MPRIS both drive the
+  shared state model and retain independent simultaneous processes. A bounded
+  Varlink interface parses and generates typed bindings; `librebonjour` builds
+  in the GNOME 50 SDK, while `varlink-glib` currently requires bundling libdex
+  1.2.beta beyond the SDK's 1.1.0. The P2P design keeps authenticated encrypted
+  pairing separate from DNS-SD discovery and proposes a companion process as a
+  way to keep network permissions out of the presenter.
+- [ ] Choose and productionise remote control only after real-client proof.
+  Test the D-Bus and MPRIS prototypes with GNOME accessibility/automation tools,
+  `playerctl`, and Valent or GSConnect plus a phone; repeat inside the production
+  Flatpak; then compare usefulness, discoverability, instance selection, and
+  required bus permissions. If a bespoke peer remains justified, prove its
+  ephemeral QR/phrase pairing, encrypted transport, explicit lifecycle and
+  revocation before granting network access. Keep MPRIS play/pause unavailable
+  unless it truthfully controls a presentation timer.
 - [ ] Explore an optional GTK-native composition environment for authoring
   presentations. Keep `.pin` as the portable plain-text source format and
   external editors fully supported, while considering a separate experience

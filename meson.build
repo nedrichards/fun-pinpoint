@@ -58,6 +58,10 @@ subdir('src')
 subdir('data')
 subdir('tests')
 
+if get_option('remote_prototypes')
+  subdir('prototypes')
+endif
+
 summary({
   'Version': pinpoint_version,
   'Application ID': pinpoint_id,

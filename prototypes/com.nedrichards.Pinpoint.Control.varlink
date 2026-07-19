@@ -1,0 +1,32 @@
+# Transport-neutral presentation controls for the remote-control experiment.
+# Pairing, authentication, encryption, discovery, and connection lifetime are
+# properties of the GIOStream carrying this interface, not of this interface.
+interface com.nedrichards.Pinpoint.Control
+
+type State (
+  slideIndex: int,
+  slideCount: int,
+  canGoNext: bool,
+  canGoPrevious: bool,
+  blank: bool,
+  fullscreen: bool,
+  speaker: bool,
+  canSwapDisplays: bool
+)
+
+method GetState() -> (state: State)
+
+# With the more flag, reply whenever the state changes until the connection
+# closes or presentation display mode ends.
+method Observe() -> (state: State)
+
+method Next() -> (state: State)
+method Previous() -> (state: State)
+method First() -> (state: State)
+method SetBlank(blank: bool) -> (state: State)
+method SetFullscreen(fullscreen: bool) -> (state: State)
+method SetSpeaker(speaker: bool) -> (state: State)
+method SwapDisplays() -> (state: State)
+
+error NotPresenting()
+error NotAvailable(action: string)
