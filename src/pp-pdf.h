@@ -40,5 +40,15 @@ gboolean pp_pdf_export_with_options          (const PpPresentation *presentation
 gboolean pp_pdf_export (const PpPresentation *presentation,
                         GFile                *output,
                         GError              **error);
+void     pp_pdf_export_file_async (GFile                *presentation_file,
+                                   gboolean              ignore_comments,
+                                   GFile                *output,
+                                   const PpPdfOptions   *options,
+                                   GCancellable         *cancellable,
+                                   GAsyncReadyCallback   callback,
+                                   gpointer              user_data);
+gboolean pp_pdf_export_file_finish (GAsyncResult         *result,
+                                    GError              **error);
+GFile   *pp_pdf_export_file_get_output (GAsyncResult      *result);
 
 G_END_DECLS

@@ -3,6 +3,7 @@
 #include "pp-presentation.h"
 #include "pp-speaker.h"
 #include "pp-stage.h"
+#include "pp-transition.h"
 
 #include <gst/gst.h>
 #include <gtk/gtk.h>
@@ -471,9 +472,13 @@ test_speaker_control_and_repeated_lifecycle (void)
       g_assert_nonnull (pause);
       g_assert_nonnull (autoadvance);
       g_assert_nonnull (swap_displays);
+      g_assert_null (g_main_context_find_source_by_user_data (NULL, speaker));
       g_signal_emit_by_name (start, "clicked");
+      g_assert_nonnull (g_main_context_find_source_by_user_data (NULL, speaker));
       g_signal_emit_by_name (pause, "clicked");
+      g_assert_null (g_main_context_find_source_by_user_data (NULL, speaker));
       g_signal_emit_by_name (pause, "clicked");
+      g_assert_nonnull (g_main_context_find_source_by_user_data (NULL, speaker));
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (autoadvance), TRUE);
       g_signal_emit_by_name (swap_displays, "clicked");
       g_assert_cmpuint (swap_requests, ==, i + 1);
@@ -751,6 +756,14 @@ test_legacy_transition_lifecycle (void)
   run_loop_for (100);
   g_assert_true (pp_stage_next (PP_STAGE (stage)));
   wait_for_transition_to_finish (PP_STAGE (stage), 5000);
+  {
+    const PpPresentation *loaded = pp_stage_get_presentation (PP_STAGE (stage));
+    const PpSlide *slide = pp_presentation_get_slide (loaded, 0);
+    g_autoptr (GFile) transition_file =
+      pp_legacy_transition_resolve_file (loaded, slide->transition);
+
+    pp_stage_invalidate_asset (PP_STAGE (stage), transition_file);
+  }
   gtk_window_destroy (window);
   run_loop_for (100);
 }

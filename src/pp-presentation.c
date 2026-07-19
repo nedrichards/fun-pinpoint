@@ -14,6 +14,7 @@ struct _PpPresentation
   char *source;
   PpSlide *defaults;
   GPtrArray *slides;
+  GHashTable *content_types;
 };
 
 G_DEFINE_QUARK (pp-presentation-error-quark, pp_presentation_error)
@@ -359,6 +360,11 @@ guess_background_content_type (PpPresentation *presentation,
   gboolean uncertain = TRUE;
   gssize length = 0;
   char *content_type = NULL;
+  const char *cached;
+
+  cached = g_hash_table_lookup (presentation->content_types, background);
+  if (cached != NULL)
+    return cached[0] != '\0' ? g_strdup (cached) : NULL;
 
   if (file != NULL)
     {
@@ -377,10 +383,19 @@ guess_background_content_type (PpPresentation *presentation,
                                          (gsize) length,
                                          &uncertain);
   if (content_type != NULL && !uncertain)
-    return content_type;
+    {
+      g_hash_table_insert (presentation->content_types,
+                           g_strdup (background),
+                           g_strdup (content_type));
+      return content_type;
+    }
 
   g_clear_pointer (&content_type, g_free);
-  return g_content_type_guess (background, NULL, 0, &uncertain);
+  content_type = g_content_type_guess (background, NULL, 0, &uncertain);
+  g_hash_table_insert (presentation->content_types,
+                       g_strdup (background),
+                       g_strdup (content_type != NULL ? content_type : ""));
+  return content_type;
 }
 
 static gboolean
@@ -496,6 +511,10 @@ pp_presentation_parse_with_stage_color (const char  *source,
   presentation->defaults = pp_slide_new ();
   replace_string (&presentation->defaults->stage_color, stage_color);
   presentation->slides = g_ptr_array_new_with_free_func ((GDestroyNotify) pp_slide_free);
+  presentation->content_types = g_hash_table_new_full (g_str_hash,
+                                                        g_str_equal,
+                                                        g_free,
+                                                        g_free);
 
   text = g_string_new (NULL);
   notes = g_string_new (NULL);
@@ -703,6 +722,7 @@ pp_presentation_free (PpPresentation *self)
   g_free (self->source);
   pp_slide_free (self->defaults);
   g_ptr_array_unref (self->slides);
+  g_hash_table_unref (self->content_types);
   g_free (self);
 }
 

@@ -18,15 +18,14 @@ pixel_luminance (const guchar *pixel)
   return pixel[0] * 0.2126 + pixel[1] * 0.7152 + pixel[2] * 0.0722;
 }
 
-double
-pp_video_thumbnail_score (GdkPixbuf *pixbuf,
-                          gboolean  *acceptable)
+static double
+score_pixels (const guchar *pixels,
+              int           width,
+              int           height,
+              int           rowstride,
+              int           channels,
+              gboolean     *acceptable)
 {
-  const guchar *pixels;
-  int width;
-  int height;
-  int rowstride;
-  int channels;
   int x_step;
   int y_step;
   double sum = 0.0;
@@ -39,26 +38,6 @@ pp_video_thumbnail_score (GdkPixbuf *pixbuf,
   double detail;
   double exposure;
 
-  g_return_val_if_fail (GDK_IS_PIXBUF (pixbuf), 0.0);
-  g_return_val_if_fail (acceptable != NULL, 0.0);
-
-  pixels = gdk_pixbuf_read_pixels (pixbuf);
-  width = gdk_pixbuf_get_width (pixbuf);
-  height = gdk_pixbuf_get_height (pixbuf);
-  rowstride = gdk_pixbuf_get_rowstride (pixbuf);
-  channels = gdk_pixbuf_get_n_channels (pixbuf);
-  if (!pp_render_validate_pixel_layout (width,
-                                        height,
-                                        rowstride,
-                                        channels,
-                                        gdk_pixbuf_get_byte_length (pixbuf),
-                                        NULL,
-                                        NULL,
-                                        NULL))
-    {
-      *acceptable = FALSE;
-      return 0.0;
-    }
   x_step = MAX (1, width / 96);
   y_step = MAX (1, height / 54);
 
@@ -101,6 +80,45 @@ pp_video_thumbnail_score (GdkPixbuf *pixbuf,
                   (deviation < 7.0 && detail < 6.0));
 
   return deviation * 4.0 + detail * 3.0 + exposure * 25.0;
+}
+
+double
+pp_video_thumbnail_score (GdkPixbuf *pixbuf,
+                          gboolean  *acceptable)
+{
+  const guchar *pixels;
+  int width;
+  int height;
+  int rowstride;
+  int channels;
+
+  g_return_val_if_fail (GDK_IS_PIXBUF (pixbuf), 0.0);
+  g_return_val_if_fail (acceptable != NULL, 0.0);
+
+  pixels = gdk_pixbuf_read_pixels (pixbuf);
+  width = gdk_pixbuf_get_width (pixbuf);
+  height = gdk_pixbuf_get_height (pixbuf);
+  rowstride = gdk_pixbuf_get_rowstride (pixbuf);
+  channels = gdk_pixbuf_get_n_channels (pixbuf);
+  if (!pp_render_validate_pixel_layout (width,
+                                        height,
+                                        rowstride,
+                                        channels,
+                                        gdk_pixbuf_get_byte_length (pixbuf),
+                                        NULL,
+                                        NULL,
+                                        NULL))
+    {
+      *acceptable = FALSE;
+      return 0.0;
+    }
+
+  return score_pixels (pixels,
+                       width,
+                       height,
+                       rowstride,
+                       channels,
+                       acceptable);
 }
 
 static void
@@ -230,6 +248,59 @@ pixbuf_from_sample (GstSample *sample,
                                     destination_stride);
 }
 
+static gboolean
+score_sample (GstSample *sample,
+              double    *score,
+              gboolean  *acceptable)
+{
+  GstCaps *caps = gst_sample_get_caps (sample);
+  GstBuffer *buffer = gst_sample_get_buffer (sample);
+  GstVideoInfo info;
+  GstVideoFrame frame;
+  const guchar *pixels;
+  gsize offset;
+  gsize available;
+  int width;
+  int height;
+  int stride;
+
+  if (caps == NULL || buffer == NULL ||
+      !gst_video_info_from_caps (&info, caps) ||
+      GST_VIDEO_INFO_FORMAT (&info) != GST_VIDEO_FORMAT_RGBA ||
+      !gst_video_frame_map (&frame, &info, buffer, GST_MAP_READ))
+    return FALSE;
+
+  width = GST_VIDEO_FRAME_WIDTH (&frame);
+  height = GST_VIDEO_FRAME_HEIGHT (&frame);
+  stride = GST_VIDEO_FRAME_PLANE_STRIDE (&frame, 0);
+  pixels = GST_VIDEO_FRAME_PLANE_DATA (&frame, 0);
+  offset = GST_VIDEO_INFO_PLANE_OFFSET (&info, 0);
+  available = offset <= gst_buffer_get_size (buffer)
+    ? gst_buffer_get_size (buffer) - offset
+    : 0;
+  if (!pp_render_validate_pixel_layout (width,
+                                        height,
+                                        stride,
+                                        4,
+                                        available,
+                                        NULL,
+                                        NULL,
+                                        NULL))
+    {
+      gst_video_frame_unmap (&frame);
+      return FALSE;
+    }
+
+  *score = score_pixels (pixels,
+                         width,
+                         height,
+                         stride,
+                         4,
+                         acceptable);
+  gst_video_frame_unmap (&frame);
+  return TRUE;
+}
+
 GdkPixbuf *
 pp_video_thumbnail_new (GFile        *file,
                         GCancellable *cancellable,
@@ -241,7 +312,8 @@ pp_video_thumbnail_new (GFile        *file,
   GstElement *audio_sink = NULL;
   GstCaps *caps = NULL;
   GdkPixbuf *pixbuf = NULL;
-  GdkPixbuf *fallback = NULL;
+  GstSample *best_sample = NULL;
+  GstSample *fallback_sample = NULL;
   GstStateChangeReturn state;
   gint64 duration = GST_CLOCK_TIME_NONE;
   double best_score = -G_MAXDOUBLE;
@@ -309,8 +381,6 @@ pp_video_thumbnail_new (GFile        *file,
 
       for (guint i = 0; i < G_N_ELEMENTS (fractions); i++)
         {
-          g_autoptr (GError) candidate_error = NULL;
-          g_autoptr (GdkPixbuf) candidate = NULL;
           GstSample *sample;
           gint64 position = CLAMP ((gint64) (duration * fractions[i]),
                                    GST_SECOND / 4,
@@ -331,27 +401,36 @@ pp_video_thumbnail_new (GFile        *file,
                                                   THUMBNAIL_SAMPLE_TIMEOUT);
           if (sample == NULL)
             continue;
-          candidate = pixbuf_from_sample (sample, &candidate_error);
-          gst_sample_unref (sample);
-          if (candidate == NULL)
-            continue;
-
-          score = pp_video_thumbnail_score (candidate, &acceptable);
+          if (!score_sample (sample, &score, &acceptable))
+            {
+              gst_sample_unref (sample);
+              continue;
+            }
           if (score > fallback_score)
             {
-              g_set_object (&fallback, candidate);
+              g_clear_pointer (&fallback_sample, gst_sample_unref);
+              fallback_sample = gst_sample_ref (sample);
               fallback_score = score;
             }
           if (acceptable && score > best_score)
             {
-              g_set_object (&pixbuf, candidate);
+              g_clear_pointer (&best_sample, gst_sample_unref);
+              best_sample = gst_sample_ref (sample);
               best_score = score;
             }
+          gst_sample_unref (sample);
         }
     }
 
-  if (pixbuf == NULL && fallback != NULL)
-    pixbuf = g_steal_pointer (&fallback);
+  if (best_sample != NULL || fallback_sample != NULL)
+    {
+      pixbuf = pixbuf_from_sample (best_sample != NULL
+                                     ? best_sample
+                                     : fallback_sample,
+                                   error);
+      if (pixbuf == NULL)
+        goto out;
+    }
   if (pixbuf == NULL)
     {
       GstSample *sample;
@@ -373,7 +452,8 @@ pp_video_thumbnail_new (GFile        *file,
     }
 
 out:
-  g_clear_object (&fallback);
+  g_clear_pointer (&best_sample, gst_sample_unref);
+  g_clear_pointer (&fallback_sample, gst_sample_unref);
   if (player != NULL)
     {
       gst_element_set_state (player, GST_STATE_NULL);

@@ -15,6 +15,7 @@
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
 #define CAMERA_INTERFACE "org.freedesktop.portal.Camera"
 #define REQUEST_INTERFACE "org.freedesktop.portal.Request"
+#define MAX_CACHED_TEXTURES 8
 
 typedef struct
 {
@@ -41,10 +42,31 @@ typedef struct
 
 typedef struct
 {
+  GFile *file;
   float width;
   float height;
   GskRenderNode *node;
 } PpCachedSvg;
+
+typedef struct
+{
+  GFile *file;
+  char *uri;
+} PpResolvedAsset;
+
+typedef struct
+{
+  GdkTexture *texture;
+  guint64 last_used;
+} PpCachedTexture;
+
+typedef struct
+{
+  gint ref_count;
+  GHashTable *resolved;
+  GHashTable *textures;
+  guint64 use_serial;
+} PpAssetCache;
 
 typedef PpTransitionLayerState LayerState;
 typedef PpTransitionState TransitionState;
@@ -54,7 +76,7 @@ struct _PpStage
   GtkWidget parent_instance;
 
   PpPresentation *presentation;
-  GHashTable *textures;
+  PpAssetCache *assets;
   GHashTable *text_nodes;
   GHashTable *svg_nodes;
   GHashTable *media;
@@ -100,6 +122,134 @@ enum
 };
 
 static guint signals[N_SIGNALS];
+
+static void
+resolved_asset_free (PpResolvedAsset *asset)
+{
+  if (asset == NULL)
+    return;
+  g_clear_object (&asset->file);
+  g_free (asset->uri);
+  g_free (asset);
+}
+
+static void
+cached_texture_free (PpCachedTexture *cached)
+{
+  if (cached == NULL)
+    return;
+  g_clear_object (&cached->texture);
+  g_free (cached);
+}
+
+static PpAssetCache *
+asset_cache_new (void)
+{
+  PpAssetCache *cache = g_new0 (PpAssetCache, 1);
+
+  cache->ref_count = 1;
+  cache->resolved = g_hash_table_new_full (
+    g_str_hash,
+    g_str_equal,
+    g_free,
+    (GDestroyNotify) resolved_asset_free);
+  cache->textures = g_hash_table_new_full (
+    g_str_hash,
+    g_str_equal,
+    g_free,
+    (GDestroyNotify) cached_texture_free);
+  return cache;
+}
+
+static PpAssetCache *
+asset_cache_ref (PpAssetCache *cache)
+{
+  g_atomic_int_inc (&cache->ref_count);
+  return cache;
+}
+
+static void
+asset_cache_unref (PpAssetCache *cache)
+{
+  if (cache == NULL || !g_atomic_int_dec_and_test (&cache->ref_count))
+    return;
+  g_hash_table_unref (cache->resolved);
+  g_hash_table_unref (cache->textures);
+  g_free (cache);
+}
+
+static void
+asset_cache_clear (PpAssetCache *cache)
+{
+  g_hash_table_remove_all (cache->resolved);
+  g_hash_table_remove_all (cache->textures);
+}
+
+static PpResolvedAsset *
+resolve_asset (PpStage              *self,
+               const PpPresentation *presentation,
+               const char           *asset)
+{
+  PpResolvedAsset *resolved = g_hash_table_lookup (self->assets->resolved,
+                                                    asset);
+
+  if (resolved != NULL)
+    return resolved;
+
+  resolved = g_new0 (PpResolvedAsset, 1);
+  resolved->file = pp_render_resolve_asset (presentation, asset);
+  if (resolved->file == NULL)
+    {
+      g_free (resolved);
+      return NULL;
+    }
+  resolved->uri = g_file_get_uri (resolved->file);
+  g_hash_table_insert (self->assets->resolved, g_strdup (asset), resolved);
+  return resolved;
+}
+
+static void
+trim_texture_cache (PpAssetCache    *cache,
+                    PpCachedTexture *keep)
+{
+  while (g_hash_table_size (cache->textures) > MAX_CACHED_TEXTURES)
+    {
+      GHashTableIter iter;
+      gpointer key;
+      gpointer value;
+      gpointer oldest_key = NULL;
+      guint64 oldest_use = G_MAXUINT64;
+
+      g_hash_table_iter_init (&iter, cache->textures);
+      while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+          PpCachedTexture *candidate = value;
+
+          if (candidate != keep && candidate->last_used < oldest_use)
+            {
+              oldest_key = key;
+              oldest_use = candidate->last_used;
+            }
+        }
+      if (oldest_key == NULL)
+        break;
+      g_hash_table_remove (cache->textures, oldest_key);
+    }
+}
+
+static gboolean
+presentations_share_file (const PpPresentation *a,
+                          const PpPresentation *b)
+{
+  GFile *a_file;
+  GFile *b_file;
+
+  if (a == NULL || b == NULL)
+    return FALSE;
+  a_file = pp_presentation_get_file (a);
+  b_file = pp_presentation_get_file (b);
+  return a_file != NULL && b_file != NULL && g_file_equal (a_file, b_file);
+}
 
 static char *
 slide_accessible_text (const PpSlide *slide)
@@ -170,6 +320,7 @@ cached_svg_free (PpCachedSvg *cached)
 {
   if (cached == NULL)
     return;
+  g_clear_object (&cached->file);
   g_clear_pointer (&cached->node, gsk_render_node_unref);
   g_free (cached);
 }
@@ -743,26 +894,34 @@ load_texture (PpStage              *self,
               const PpPresentation *presentation,
               const char           *asset)
 {
-  g_autoptr (GFile) file = NULL;
-  g_autofree char *uri = NULL;
   g_autoptr (GError) error = NULL;
-  GdkTexture *texture;
+  PpResolvedAsset *resolved = resolve_asset (self, presentation, asset);
+  PpCachedTexture *cached;
 
-  file = pp_render_resolve_asset (presentation, asset);
-  uri = g_file_get_uri (file);
-  texture = g_hash_table_lookup (self->textures, uri);
-  if (texture != NULL)
-    return texture;
+  if (resolved == NULL)
+    return NULL;
+  cached = g_hash_table_lookup (self->assets->textures, resolved->uri);
+  if (cached != NULL)
+    {
+      cached->last_used = ++self->assets->use_serial;
+      return cached->texture;
+    }
 
-  texture = gdk_texture_new_from_file (file, &error);
-  if (texture == NULL)
+  cached = g_new0 (PpCachedTexture, 1);
+  cached->texture = gdk_texture_new_from_file (resolved->file, &error);
+  if (cached->texture == NULL)
     {
       g_warning ("Unable to load background %s: %s", asset, error->message);
+      g_free (cached);
       return NULL;
     }
 
-  g_hash_table_insert (self->textures, g_steal_pointer (&uri), texture);
-  return texture;
+  cached->last_used = ++self->assets->use_serial;
+  g_hash_table_insert (self->assets->textures,
+                       g_strdup (resolved->uri),
+                       cached);
+  trim_texture_cache (self->assets, cached);
+  return cached->texture;
 }
 
 static PpMedia *
@@ -770,12 +929,15 @@ load_media (PpStage              *self,
             const PpPresentation *presentation,
             const char           *asset)
 {
-  g_autoptr (GFile) file = pp_render_resolve_asset (presentation, asset);
-  g_autofree char *uri = g_file_get_uri (file);
+  PpResolvedAsset *resolved = resolve_asset (self, presentation, asset);
   GstElement *sink;
   GstElement *audio_sink = NULL;
   GstBus *bus;
-  PpMedia *media = g_hash_table_lookup (self->media, uri);
+  PpMedia *media;
+
+  if (resolved == NULL)
+    return NULL;
+  media = g_hash_table_lookup (self->media, resolved->uri);
 
   if (media != NULL)
     return media;
@@ -818,7 +980,7 @@ load_media (PpStage              *self,
         }
     }
   g_object_set (media->player,
-                "uri", uri,
+                "uri", resolved->uri,
                 "video-sink", sink,
                 "audio-sink", audio_sink,
                 NULL);
@@ -846,7 +1008,7 @@ load_media (PpStage              *self,
   bus = gst_element_get_bus (media->player);
   media->bus_watch_id = gst_bus_add_watch (bus, media_bus_cb, media);
   gst_object_unref (bus);
-  g_hash_table_insert (self->media, g_steal_pointer (&uri), media);
+  g_hash_table_insert (self->media, g_strdup (resolved->uri), media);
 
   return media;
 }
@@ -1121,7 +1283,7 @@ load_svg_node (PpStage              *self,
                float                 height)
 {
   PpCachedSvg *cached = g_hash_table_lookup (self->svg_nodes, slide);
-  g_autoptr (GFile) file = NULL;
+  PpResolvedAsset *resolved;
   RsvgHandle *handle = NULL;
   g_autoptr (GError) error = NULL;
   GtkSnapshot *svg_snapshot;
@@ -1137,8 +1299,10 @@ load_svg_node (PpStage              *self,
   if (cached != NULL && cached->width == width && cached->height == height)
     return cached->node;
 
-  file = pp_render_resolve_asset (presentation, slide->background);
-  handle = rsvg_handle_new_from_gfile_sync (file,
+  resolved = resolve_asset (self, presentation, slide->background);
+  if (resolved == NULL)
+    return NULL;
+  handle = rsvg_handle_new_from_gfile_sync (resolved->file,
                                             RSVG_HANDLE_FLAGS_NONE,
                                             NULL,
                                             &error);
@@ -1183,6 +1347,7 @@ load_svg_node (PpStage              *self,
     }
 
   cached = g_new0 (PpCachedSvg, 1);
+  cached->file = g_object_ref (resolved->file);
   cached->width = width;
   cached->height = height;
   cached->node = node;
@@ -1777,7 +1942,7 @@ pp_stage_dispose (GObject *object)
       self->camera_response_subscription = 0;
     }
   g_clear_pointer (&self->presentation, pp_presentation_free);
-  g_clear_pointer (&self->textures, g_hash_table_unref);
+  g_clear_pointer (&self->assets, asset_cache_unref);
   g_clear_pointer (&self->text_nodes, g_hash_table_unref);
   g_clear_pointer (&self->svg_nodes, g_hash_table_unref);
   g_clear_pointer (&self->media, g_hash_table_unref);
@@ -1835,10 +2000,7 @@ pp_stage_class_init (PpStageClass *klass)
 static void
 pp_stage_init (PpStage *self)
 {
-  self->textures = g_hash_table_new_full (g_str_hash,
-                                          g_str_equal,
-                                          g_free,
-                                          g_object_unref);
+  self->assets = asset_cache_new ();
   self->text_nodes = g_hash_table_new_full (g_direct_hash,
                                             g_direct_equal,
                                             NULL,
@@ -1891,12 +2053,14 @@ pp_stage_set_presentation (PpStage        *self,
                            guint           initial_slide)
 {
   guint count;
+  gboolean keep_assets;
 
   g_return_if_fail (PP_IS_STAGE (self));
   g_return_if_fail (presentation != NULL);
 
   count = pp_presentation_get_n_slides (presentation);
   g_return_if_fail (count > 0);
+  keep_assets = presentations_share_file (self->presentation, presentation);
 
   if (self->tick_id != 0)
     {
@@ -1910,7 +2074,8 @@ pp_stage_set_presentation (PpStage        *self,
   self->presentation = presentation;
   self->current_slide = MIN (initial_slide, count - 1);
   self->previous_slide = self->current_slide;
-  g_hash_table_remove_all (self->textures);
+  if (!keep_assets)
+    asset_cache_clear (self->assets);
   g_hash_table_remove_all (self->text_nodes);
   g_hash_table_remove_all (self->svg_nodes);
   g_hash_table_remove_all (self->media);
@@ -1933,6 +2098,31 @@ pp_stage_get_current_slide (PpStage *self)
 {
   g_return_val_if_fail (PP_IS_STAGE (self), 0);
   return self->current_slide;
+}
+
+void
+pp_stage_set_slide (PpStage *self,
+                    guint    slide)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  g_return_if_fail (self->presentation != NULL);
+  g_return_if_fail (slide < pp_presentation_get_n_slides (self->presentation));
+
+  if (self->current_slide == slide && !self->transitioning)
+    return;
+  if (self->tick_id != 0)
+    {
+      gtk_widget_remove_tick_callback (GTK_WIDGET (self), self->tick_id);
+      self->tick_id = 0;
+    }
+  self->transitioning = FALSE;
+  clear_page_curl (self);
+  stop_all_media (self);
+  self->current_slide = slide;
+  self->previous_slide = slide;
+  update_accessibility (self);
+  gtk_widget_queue_draw (GTK_WIDGET (self));
+  g_signal_emit (self, signals[SLIDE_CHANGED], 0, self->current_slide);
 }
 
 static gboolean
@@ -2103,4 +2293,62 @@ pp_stage_set_camera_device (PpStage    *self,
   g_return_if_fail (PP_IS_STAGE (self));
   g_free (self->camera_device);
   self->camera_device = g_strdup (device);
+}
+
+void
+pp_stage_share_asset_cache (PpStage *self,
+                            PpStage *source)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  g_return_if_fail (PP_IS_STAGE (source));
+  g_return_if_fail (self != source);
+
+  if (self->assets == source->assets)
+    return;
+  asset_cache_unref (self->assets);
+  self->assets = asset_cache_ref (source->assets);
+}
+
+void
+pp_stage_invalidate_asset (PpStage *self,
+                           GFile   *file)
+{
+  GHashTableIter iter;
+  gpointer key;
+  gpointer value;
+  g_autofree char *uri = NULL;
+
+  g_return_if_fail (PP_IS_STAGE (self));
+  g_return_if_fail (G_IS_FILE (file));
+
+  uri = g_file_get_uri (file);
+  g_hash_table_remove (self->assets->textures, uri);
+  g_hash_table_remove (self->media, uri);
+  g_hash_table_iter_init (&iter, self->svg_nodes);
+  while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+      PpCachedSvg *cached = value;
+
+      if (g_file_equal (cached->file, file))
+        g_hash_table_iter_remove (&iter);
+    }
+  g_hash_table_iter_init (&iter, self->legacy_transitions);
+  while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+      g_autoptr (GFile) transition_file =
+        pp_legacy_transition_resolve_file (self->presentation, key);
+
+      if (transition_file != NULL && g_file_equal (transition_file, file))
+        g_hash_table_iter_remove (&iter);
+    }
+  g_hash_table_iter_init (&iter, self->failed_transitions);
+  while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+      g_autoptr (GFile) transition_file =
+        pp_legacy_transition_resolve_file (self->presentation, key);
+
+      if (transition_file != NULL && g_file_equal (transition_file, file))
+        g_hash_table_iter_remove (&iter);
+    }
+  gtk_widget_queue_draw (GTK_WIDGET (self));
 }

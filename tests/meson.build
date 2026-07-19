@@ -4,6 +4,14 @@ parser_test = executable(
   dependencies: [pinpoint_core_dep],
 )
 
+asset_monitor_test = executable(
+  'test-asset-monitor',
+  'test-asset-monitor.c',
+  dependencies: [pinpoint_core_dep],
+)
+
+test('asset-monitor', asset_monitor_test)
+
 display_selection_test = executable(
   'test-display-selection',
   'test-display-selection.c',
@@ -123,22 +131,23 @@ pixel_test = executable(
 
 pixel_fixture = files('fixtures/pixel-reference.pin')
 svg_pixel_fixture = files('fixtures/svg-quality.pin')
+raster_cache_fixture = files('fixtures/raster-cache.pin')
 test(
   'pixels-800x600',
   pixel_test,
-  args: [pixel_fixture, svg_pixel_fixture, '800', '600'],
+  args: [pixel_fixture, svg_pixel_fixture, '800', '600', raster_cache_fixture],
   timeout: 10,
 )
 test(
   'pixels-widescreen',
   pixel_test,
-  args: [pixel_fixture, svg_pixel_fixture, '1280', '720'],
+  args: [pixel_fixture, svg_pixel_fixture, '1280', '720', raster_cache_fixture],
   timeout: 10,
 )
 test(
   'pixels-hidpi',
   pixel_test,
-  args: [pixel_fixture, svg_pixel_fixture, '800', '600'],
+  args: [pixel_fixture, svg_pixel_fixture, '800', '600', raster_cache_fixture],
   env: { 'GDK_SCALE': '2' },
   timeout: 10,
 )

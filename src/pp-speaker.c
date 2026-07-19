@@ -211,9 +211,13 @@ set_preview (PpStage              *preview,
     }
 
   gtk_widget_set_visible (GTK_WIDGET (preview), TRUE);
-  pp_stage_set_presentation (preview,
-                             pp_presentation_ref ((PpPresentation *) presentation),
-                             (guint) index);
+  if (pp_stage_get_presentation (preview) == presentation)
+    pp_stage_set_slide (preview, (guint) index);
+  else
+    pp_stage_set_presentation (
+      preview,
+      pp_presentation_ref ((PpPresentation *) presentation),
+      (guint) index);
 }
 
 static char *
@@ -321,6 +325,22 @@ timer_cb (gpointer user_data)
 }
 
 static void
+start_timer_updates (PpSpeaker *self)
+{
+  if (self->tick_id == 0)
+    self->tick_id = g_timeout_add (50, timer_cb, self);
+}
+
+static void
+stop_timer_updates (PpSpeaker *self)
+{
+  if (self->tick_id == 0)
+    return;
+  g_source_remove (self->tick_id);
+  self->tick_id = 0;
+}
+
+static void
 audience_slide_changed_cb (PpStage *stage,
                            guint    index,
                            gpointer user_data)
@@ -355,14 +375,18 @@ presentation_ended_cb (PpStage *stage,
 {
   PpSpeaker *self = user_data;
   g_autoptr (GError) error = NULL;
-  double now;
+  double now = self->running ? g_timer_elapsed (self->timer, NULL) : 0.0;
 
   (void) stage;
   gtk_toggle_button_set_active (self->autoadvance_button, FALSE);
-  if (!self->rehearsing || !self->running)
+  if (self->running)
+    g_timer_stop (self->timer);
+  self->running = FALSE;
+  self->paused = FALSE;
+  stop_timer_updates (self);
+  if (!self->rehearsing)
     return;
 
-  now = g_timer_elapsed (self->timer, NULL);
   pp_presentation_rehearsal_record (self->rehearsal_presentation,
                                     self->timed_slide,
                                     MAX (now - self->slide_started, 0.0));
@@ -389,6 +413,7 @@ restart_timer (PpSpeaker *self,
   self->timed_slide = pp_stage_get_current_slide (self->audience_stage);
   self->running = TRUE;
   self->paused = FALSE;
+  start_timer_updates (self);
   gtk_button_set_label (self->start_button, "Restart");
   gtk_button_set_label (self->pause_button, "Pause");
   gtk_button_set_label (self->rehearse_button, "Rehearse");
@@ -492,12 +517,15 @@ pause_cb (GtkButton *button,
     {
       g_timer_continue (self->timer);
       self->paused = FALSE;
+      start_timer_updates (self);
       gtk_button_set_label (self->pause_button, "Pause");
     }
   else
     {
       g_timer_stop (self->timer);
       self->paused = TRUE;
+      stop_timer_updates (self);
+      timer_cb (self);
       gtk_button_set_label (self->pause_button, "Continue");
     }
 }
@@ -567,11 +595,13 @@ install_speaker_css (GdkDisplay *display)
 
 static GtkWidget *
 make_preview (PpStage    **out_preview,
+              PpStage     *audience_stage,
               const char  *accessible_context)
 {
   GtkWidget *preview = pp_stage_new ();
 
   pp_stage_set_media_enabled (PP_STAGE (preview), FALSE);
+  pp_stage_share_asset_cache (PP_STAGE (preview), audience_stage);
   pp_stage_set_accessible_context (PP_STAGE (preview), accessible_context);
   *out_preview = PP_STAGE (preview);
   return preview;
@@ -620,9 +650,15 @@ pp_speaker_new (GtkApplication *application,
 
   root = gtk_overlay_new ();
   gtk_window_set_child (self->window, root);
-  previous = make_preview (&self->previous_preview, "Previous slide");
-  current = make_preview (&self->current_preview, "Current slide");
-  next = make_preview (&self->next_preview, "Next slide");
+  previous = make_preview (&self->previous_preview,
+                           audience_stage,
+                           "Previous slide");
+  current = make_preview (&self->current_preview,
+                          audience_stage,
+                          "Current slide");
+  next = make_preview (&self->next_preview,
+                       audience_stage,
+                       "Next slide");
 
   self->notes = GTK_LABEL (gtk_label_new (NULL));
   gtk_label_set_wrap (self->notes, TRUE);
@@ -734,7 +770,6 @@ pp_speaker_new (GtkApplication *application,
                     "presentation-ended",
                     G_CALLBACK (presentation_ended_cb),
                     self);
-  self->tick_id = g_timeout_add (50, timer_cb, self);
   update_previews (self);
   return self;
 }
@@ -745,8 +780,7 @@ pp_speaker_free (PpSpeaker *self)
   if (self == NULL)
     return;
 
-  if (self->tick_id != 0)
-    g_source_remove (self->tick_id);
+  stop_timer_updates (self);
   g_signal_handlers_disconnect_by_data (self->audience_stage, self);
   /* GtkApplicationWindow removal on Wayland expects a toplevel surface even
    * when the optional speaker window has never been shown. Realizing here is
@@ -808,4 +842,16 @@ pp_speaker_start_rehearsal (PpSpeaker *self)
 {
   g_return_if_fail (self != NULL);
   restart_timer (self, TRUE);
+}
+
+void
+pp_speaker_invalidate_asset (PpSpeaker *self,
+                             GFile     *file)
+{
+  g_return_if_fail (self != NULL);
+  g_return_if_fail (G_IS_FILE (file));
+
+  pp_stage_invalidate_asset (self->previous_preview, file);
+  pp_stage_invalidate_asset (self->current_preview, file);
+  pp_stage_invalidate_asset (self->next_preview, file);
 }

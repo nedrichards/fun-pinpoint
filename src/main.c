@@ -1,5 +1,6 @@
 #include "config.h"
 
+#include "pp-asset-monitor.h"
 #include "pp-control.h"
 #include "pp-display-selection.h"
 #include "pp-file-access.h"
@@ -40,6 +41,7 @@ typedef struct
   GFile *file;
   GFile *presentation_folder;
   GFileMonitor *monitor;
+  PpAssetMonitors *asset_monitors;
   guint reload_id;
   guint hide_cursor_id;
   guint sigint_id;
@@ -69,6 +71,7 @@ static void set_speaker_visible (Pinpoint *pinpoint,
 static void set_presenting (Pinpoint *pinpoint,
                             gboolean  presenting);
 static void open_presentation_folder_dialog (Pinpoint *pinpoint);
+static void start_monitor (Pinpoint *pinpoint);
 
 static gboolean
 termination_signal_cb (gpointer user_data)
@@ -319,7 +322,8 @@ reload_cb (gpointer user_data)
   Pinpoint *pinpoint = user_data;
 
   pinpoint->reload_id = 0;
-  load_presentation (pinpoint, TRUE);
+  if (load_presentation (pinpoint, TRUE))
+    start_monitor (pinpoint);
   return G_SOURCE_REMOVE;
 }
 
@@ -343,11 +347,29 @@ file_changed_cb (GFileMonitor      *monitor,
 }
 
 static void
+asset_changed_cb (GFile    *file,
+                  gpointer  user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  pp_stage_invalidate_asset (pinpoint->stage, file);
+  if (pinpoint->speaker != NULL)
+    pp_speaker_invalidate_asset (pinpoint->speaker, file);
+}
+
+static void
 start_monitor (Pinpoint *pinpoint)
 {
   g_autoptr (GError) error = NULL;
+  const PpPresentation *presentation;
 
   g_clear_object (&pinpoint->monitor);
+  g_clear_pointer (&pinpoint->asset_monitors, pp_asset_monitors_free);
+  presentation = pp_stage_get_presentation (pinpoint->stage);
+  if (presentation != NULL && !pinpoint->bundled_read_only)
+    pinpoint->asset_monitors = pp_asset_monitors_new (presentation,
+                                                       asset_changed_cb,
+                                                       pinpoint);
   if (pinpoint->file == NULL || pinpoint->bundled_read_only)
     return;
 
@@ -516,21 +538,38 @@ show_export_success (Pinpoint *pinpoint,
 }
 
 static void
+pdf_export_finished_cb (GObject      *source,
+                        GAsyncResult *result,
+                        gpointer      user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  GFile *output = pp_pdf_export_file_get_output (result);
+  g_autoptr (GError) error = NULL;
+
+  (void) source;
+  pinpoint->exporting_pdf = FALSE;
+  if (!pp_pdf_export_file_finish (result, &error))
+    show_folder_problem (pinpoint, "Unable to Export PDF", error->message, FALSE);
+  else
+    show_export_success (pinpoint, output);
+  g_application_release (G_APPLICATION (pinpoint->application));
+}
+
+static void
 pdf_save_finished_cb (GObject      *source,
                       GAsyncResult *result,
                       gpointer      user_data)
 {
   Pinpoint *pinpoint = user_data;
   g_autoptr (GFile) output = NULL;
-  g_autoptr (PpPresentation) presentation = NULL;
   g_autoptr (GError) error = NULL;
 
   output = gtk_file_dialog_save_finish (GTK_FILE_DIALOG (source),
                                          result,
                                          &error);
-  pinpoint->exporting_pdf = FALSE;
   if (output == NULL)
     {
+      pinpoint->exporting_pdf = FALSE;
       if (!g_error_matches (error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
           !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
         show_folder_problem (pinpoint,
@@ -540,24 +579,14 @@ pdf_save_finished_cb (GObject      *source,
       return;
     }
 
-  presentation = pp_presentation_load_for_pdf (pinpoint->file,
-                                                pinpoint->ignore_comments,
-                                                NULL,
-                                                &error);
-  if (presentation == NULL ||
-      !pp_pdf_export_with_options (presentation,
-                                   output,
-                                   &pinpoint->pdf_options,
-                                   &error))
-    {
-      show_folder_problem (pinpoint,
-                           "Unable to Export PDF",
-                           error->message,
-                           FALSE);
-      return;
-    }
-
-  show_export_success (pinpoint, output);
+  g_application_hold (G_APPLICATION (pinpoint->application));
+  pp_pdf_export_file_async (pinpoint->file,
+                            pinpoint->ignore_comments,
+                            output,
+                            &pinpoint->pdf_options,
+                            NULL,
+                            pdf_export_finished_cb,
+                            pinpoint);
 }
 
 static void
@@ -1927,6 +1956,7 @@ pinpoint_clear (Pinpoint *pinpoint)
       pinpoint->sigterm_id = 0;
     }
   g_clear_object (&pinpoint->monitor);
+  g_clear_pointer (&pinpoint->asset_monitors, pp_asset_monitors_free);
   g_clear_object (&pinpoint->file);
   g_clear_object (&pinpoint->presentation_folder);
   if (pinpoint->monitors != NULL && pinpoint->monitors_changed_id != 0)

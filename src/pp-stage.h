@@ -16,6 +16,8 @@ void       pp_stage_set_presentation (PpStage        *self,
                                       guint           initial_slide);
 const PpPresentation *pp_stage_get_presentation (PpStage *self);
 guint      pp_stage_get_current_slide (PpStage *self);
+void       pp_stage_set_slide (PpStage *self,
+                               guint    slide);
 gboolean   pp_stage_next (PpStage *self);
 gboolean   pp_stage_previous (PpStage *self);
 void       pp_stage_first (PpStage *self);
@@ -31,5 +33,9 @@ void       pp_stage_set_audio_enabled (PpStage  *self,
                                        gboolean  enabled);
 void       pp_stage_set_camera_device (PpStage    *self,
                                        const char *device);
+void       pp_stage_share_asset_cache (PpStage *self,
+                                       PpStage *source);
+void       pp_stage_invalidate_asset (PpStage *self,
+                                      GFile   *file);
 
 G_END_DECLS

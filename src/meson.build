@@ -7,6 +7,8 @@ pinpoint_resources = gnome.compile_resources(
 )
 
 pinpoint_core_sources = files(
+  'pp-asset-monitor.c',
+  'pp-asset-monitor.h',
   'pp-file-access.c',
   'pp-file-access.h',
   'pp-control.c',
@@ -19,6 +21,7 @@ pinpoint_core_sources = files(
   'pp-presentation.h',
   'pp-pdf.c',
   'pp-pdf.h',
+  'pp-pdf-async.c',
   'pp-video-thumbnail.c',
   'pp-video-thumbnail.h',
   'pp-transition.c',

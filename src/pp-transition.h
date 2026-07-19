@@ -32,6 +32,8 @@ double              pp_transition_apply_easing          (const char           *n
 PpLegacyTransition *pp_legacy_transition_load           (const PpPresentation *presentation,
                                                          const char           *name,
                                                          GError              **error);
+GFile              *pp_legacy_transition_resolve_file   (const PpPresentation *presentation,
+                                                         const char           *name);
 void                pp_legacy_transition_free           (PpLegacyTransition  *transition);
 guint               pp_legacy_transition_get_duration   (PpLegacyTransition  *transition,
                                                          gboolean             incoming,

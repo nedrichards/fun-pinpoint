@@ -185,12 +185,26 @@ parse_transition_object (PpLegacyTransition *transition,
   return recognized;
 }
 
+GFile *
+pp_legacy_transition_resolve_file (const PpPresentation *presentation,
+                                   const char           *name)
+{
+  g_autofree char *filename = NULL;
+
+  g_return_val_if_fail (presentation != NULL, NULL);
+  g_return_val_if_fail (name != NULL, NULL);
+
+  filename = g_str_has_suffix (name, ".json")
+    ? g_strdup (name)
+    : g_strconcat (name, ".json", NULL);
+  return pp_render_resolve_asset (presentation, filename);
+}
+
 PpLegacyTransition *
 pp_legacy_transition_load (const PpPresentation *presentation,
                            const char           *name,
                            GError              **error)
 {
-  g_autofree char *filename = NULL;
   g_autofree char *contents = NULL;
   gsize contents_length = 0;
   g_autoptr (GFile) file = NULL;
@@ -206,10 +220,7 @@ pp_legacy_transition_load (const PpPresentation *presentation,
   g_return_val_if_fail (presentation != NULL, NULL);
   g_return_val_if_fail (name != NULL, NULL);
 
-  filename = g_str_has_suffix (name, ".json")
-    ? g_strdup (name)
-    : g_strconcat (name, ".json", NULL);
-  file = pp_render_resolve_asset (presentation, filename);
+  file = pp_legacy_transition_resolve_file (presentation, name);
   parser = json_parser_new ();
   if (!g_file_load_contents (file,
                              NULL,

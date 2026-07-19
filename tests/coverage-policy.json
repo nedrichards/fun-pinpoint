@@ -34,6 +34,11 @@
     }
   },
   "limits": {
+    "src/pp-asset-monitor.c": {
+      "uncovered_branches": 14,
+      "uncovered_functions": 0,
+      "uncovered_lines": 6
+    },
     "src/main.c": {
       "uncovered_lines": 625
     },
@@ -70,8 +75,13 @@
       "uncovered_functions": 5,
       "uncovered_lines": 146
     },
+    "src/pp-pdf-async.c": {
+      "uncovered_branches": 30,
+      "uncovered_functions": 0,
+      "uncovered_lines": 0
+    },
     "src/pp-presentation.c": {
-      "uncovered_branches": 156,
+      "uncovered_branches": 158,
       "uncovered_functions": 3,
       "uncovered_lines": 62
     },
@@ -92,9 +102,9 @@
       "uncovered_lines": 0
     },
     "src/pp-video-thumbnail.c": {
-      "uncovered_branches": 79,
+      "uncovered_branches": 86,
       "uncovered_functions": 1,
-      "uncovered_lines": 52
+      "uncovered_lines": 56
     }
   },
   "version": 1

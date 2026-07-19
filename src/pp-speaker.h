@@ -20,6 +20,8 @@ void       pp_speaker_set_fullscreen (PpSpeaker *self,
                                       gboolean   fullscreen,
                                       GdkMonitor *monitor);
 void       pp_speaker_start_rehearsal (PpSpeaker *self);
+void       pp_speaker_invalidate_asset (PpSpeaker *self,
+                                        GFile     *file);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (PpSpeaker, pp_speaker_free)
 

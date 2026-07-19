@@ -748,6 +748,104 @@ test_pdf_export (void)
   g_assert_no_error (error);
 }
 
+typedef struct
+{
+  GMainLoop *loop;
+  GFile *expected_output;
+  gboolean success;
+  GError *error;
+} AsyncPdfState;
+
+static void
+pdf_export_finished_cb (GObject      *source,
+                        GAsyncResult *result,
+                        gpointer      user_data)
+{
+  AsyncPdfState *state = user_data;
+
+  (void) source;
+  g_assert_true (g_file_equal (pp_pdf_export_file_get_output (result),
+                               state->expected_output));
+  state->success = pp_pdf_export_file_finish (result, &state->error);
+  g_main_loop_quit (state->loop);
+}
+
+static void
+test_pdf_export_async (void)
+{
+  static const char source[] = "--\nAsynchronous PDF\n";
+  const PpPdfOptions options = PP_PDF_OPTIONS_DEFAULT;
+  g_autoptr (GFileIOStream) input_stream = NULL;
+  g_autoptr (GFileIOStream) output_stream = NULL;
+  g_autoptr (GFile) input = NULL;
+  g_autoptr (GFile) output = NULL;
+  g_autoptr (GFileInfo) info = NULL;
+  g_autoptr (GMainLoop) loop = g_main_loop_new (NULL, FALSE);
+  g_autoptr (GError) error = NULL;
+  AsyncPdfState state = { .loop = loop };
+
+  input = g_file_new_tmp ("pinpoint-async-input-XXXXXX",
+                          &input_stream,
+                          &error);
+  g_assert_no_error (error);
+  output = g_file_new_tmp ("pinpoint-async-output-XXXXXX",
+                           &output_stream,
+                           &error);
+  g_assert_no_error (error);
+  g_assert_true (g_io_stream_close (G_IO_STREAM (input_stream), NULL, &error));
+  g_assert_no_error (error);
+  g_assert_true (g_io_stream_close (G_IO_STREAM (output_stream), NULL, &error));
+  g_assert_no_error (error);
+  g_clear_object (&input_stream);
+  g_clear_object (&output_stream);
+  state.expected_output = output;
+  g_assert_true (g_file_replace_contents (input,
+                                          source,
+                                          strlen (source),
+                                          NULL,
+                                          FALSE,
+                                          G_FILE_CREATE_NONE,
+                                          NULL,
+                                          NULL,
+                                          &error));
+  g_assert_no_error (error);
+
+  pp_pdf_export_file_async (input,
+                            FALSE,
+                            output,
+                            &options,
+                            NULL,
+                            pdf_export_finished_cb,
+                            &state);
+  g_main_loop_run (loop);
+  g_assert_true (state.success);
+  g_assert_no_error (state.error);
+  info = g_file_query_info (output,
+                            G_FILE_ATTRIBUTE_STANDARD_SIZE,
+                            G_FILE_QUERY_INFO_NONE,
+                            NULL,
+                            &error);
+  g_assert_no_error (error);
+  g_assert_cmpuint (g_file_info_get_size (info), >, 0);
+
+  g_assert_true (g_file_delete (input, NULL, &error));
+  g_assert_no_error (error);
+  state.success = TRUE;
+  pp_pdf_export_file_async (input,
+                            FALSE,
+                            output,
+                            &options,
+                            NULL,
+                            pdf_export_finished_cb,
+                            &state);
+  g_main_loop_run (loop);
+  g_assert_false (state.success);
+  g_assert_nonnull (state.error);
+  g_clear_error (&state.error);
+  g_assert_true (g_file_delete (output, NULL, &error));
+  g_assert_no_error (error);
+}
+
 static void
 test_pdf_default_stage_color (void)
 {
@@ -1412,6 +1510,7 @@ main (int   argc,
   g_test_add_func ("/file-access/bundled-introduction",
                    test_bundled_introduction);
   g_test_add_func ("/render/pdf-export", test_pdf_export);
+  g_test_add_func ("/render/pdf-export-async", test_pdf_export_async);
   g_test_add_func ("/render/pdf-default-stage-color", test_pdf_default_stage_color);
   g_test_add_func ("/render/pdf-options", test_pdf_options);
   g_test_add_func ("/render/pdf-sibling-asset", test_pdf_sibling_asset);

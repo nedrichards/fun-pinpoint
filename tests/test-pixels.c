@@ -1,4 +1,5 @@
 #include "pp-presentation.h"
+#include "pp-render.h"
 #include "pp-stage.h"
 
 #include <gtk/gtk.h>
@@ -45,7 +46,15 @@ snapshot_widget (GtkWidget *widget)
                           gtk_widget_get_width (widget),
                           gtk_widget_get_height (widget));
   node = gtk_snapshot_free_to_node (snapshot);
-  g_assert_nonnull (node);
+  if (node == NULL)
+    g_error ("Snapshot was empty for %s/%s at %dx%d (mapped=%d, visible=%d, opacity=%.1f)",
+             G_OBJECT_TYPE_NAME (widget),
+             gtk_widget_get_name (widget),
+             gtk_widget_get_width (widget),
+             gtk_widget_get_height (widget),
+             gtk_widget_get_mapped (widget),
+             gtk_widget_get_visible (widget),
+             gtk_widget_get_opacity (widget));
   texture = gsk_renderer_render_texture (renderer, node, NULL);
   gsk_render_node_unref (node);
   return texture;
@@ -157,6 +166,75 @@ test_svg_background (GtkApplication *application,
   run_loop_for (100);
 }
 
+static void
+test_shared_raster_cache (GtkApplication *application,
+                          const char     *fixture)
+{
+  g_autoptr (GFile) file = g_file_new_for_path (fixture);
+  g_autoptr (GFile) asset = NULL;
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GdkTexture) first = NULL;
+  g_autoptr (GdkTexture) second = NULL;
+  const PpSlide *slide;
+  GtkWindow *window;
+  GtkWindow *preview_window;
+  GtkWidget *audience;
+  GtkWidget *preview;
+
+  presentation = pp_presentation_load (file, FALSE, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (presentation);
+  window = GTK_WINDOW (gtk_application_window_new (application));
+  preview_window = GTK_WINDOW (gtk_application_window_new (application));
+  audience = pp_stage_new ();
+  preview = pp_stage_new ();
+  gtk_widget_set_name (audience, "raster-audience");
+  gtk_widget_set_name (preview, "raster-preview");
+  pp_stage_set_media_enabled (PP_STAGE (audience), FALSE);
+  pp_stage_set_media_enabled (PP_STAGE (preview), FALSE);
+  pp_stage_share_asset_cache (PP_STAGE (preview), PP_STAGE (audience));
+  pp_stage_set_presentation (PP_STAGE (audience),
+                             pp_presentation_ref (presentation),
+                             0);
+  pp_stage_set_presentation (PP_STAGE (preview),
+                             g_steal_pointer (&presentation),
+                             0);
+  gtk_widget_set_size_request (audience, 320, 240);
+  gtk_widget_set_size_request (preview, 320, 240);
+  gtk_window_set_child (window, audience);
+  gtk_window_set_child (preview_window, preview);
+  gtk_window_set_default_size (window, 320, 240);
+  gtk_window_set_default_size (preview_window, 320, 240);
+  gtk_window_set_resizable (window, FALSE);
+  gtk_window_set_resizable (preview_window, FALSE);
+  gtk_window_present (window);
+  gtk_window_present (preview_window);
+  run_loop_for (200);
+
+  first = snapshot_widget (audience);
+  second = snapshot_widget (preview);
+  g_assert_nonnull (first);
+  g_assert_nonnull (second);
+  g_assert_false (pp_stage_get_blank (PP_STAGE (audience)));
+  pp_stage_set_slide (PP_STAGE (preview), 1);
+  slide = pp_presentation_get_slide (
+    pp_stage_get_presentation (PP_STAGE (audience)), 0);
+  asset = pp_render_resolve_asset (
+    pp_stage_get_presentation (PP_STAGE (audience)), slide->background);
+  pp_stage_invalidate_asset (PP_STAGE (audience), asset);
+  pp_stage_invalidate_asset (PP_STAGE (preview), asset);
+  gtk_widget_set_name (preview, "raster-preview-invalidated");
+  run_loop_for (100);
+  g_clear_object (&second);
+  second = snapshot_widget (preview);
+  g_assert_nonnull (second);
+
+  gtk_window_destroy (window);
+  gtk_window_destroy (preview_window);
+  run_loop_for (100);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -178,7 +256,7 @@ main (int   argc,
   guint white_pixels = 0;
   guint shaded_pixels = 0;
 
-  if (argc != 5)
+  if (argc != 6)
     return EXIT_FAILURE;
   width = (int) g_ascii_strtoll (argv[3], NULL, 10);
   height = (int) g_ascii_strtoll (argv[4], NULL, 10);
@@ -247,5 +325,6 @@ main (int   argc,
   gtk_window_destroy (window);
   run_loop_for (100);
   test_svg_background (application, argv[2], width, height);
+  test_shared_raster_cache (application, argv[5]);
   return EXIT_SUCCESS;
 }

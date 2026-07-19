@@ -176,18 +176,34 @@ test_reload_then_shutdown (void)
   g_autofree char *directory = g_dir_make_tmp ("pinpoint-application-XXXXXX",
                                                NULL);
   g_autofree char *path = g_build_filename (directory, "reload.pin", NULL);
+  g_autofree char *asset_path = g_build_filename (directory, "asset.svg", NULL);
   const char *arguments[] = { pinpoint_path, path, NULL };
   g_autoptr (GSubprocess) process = NULL;
   g_autoptr (GError) error = NULL;
 
   g_assert_true (g_file_set_contents (path,
-                                      "-- [black]\nFirst\n",
+                                      "-- [asset.svg]\nFirst\n",
                                       -1,
                                       &error));
+  g_assert_no_error (error);
+  g_assert_true (g_file_set_contents (
+    asset_path,
+    "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'>"
+    "<rect width='32' height='32' fill='red'/></svg>",
+    -1,
+    &error));
   g_assert_no_error (error);
   process = launch_application (arguments);
   run_loop_for (500);
   g_assert_true (process_is_running (process));
+  g_assert_true (g_file_set_contents (
+    asset_path,
+    "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'>"
+    "<rect width='32' height='32' fill='blue'/></svg>",
+    -1,
+    &error));
+  g_assert_no_error (error);
+  run_loop_for (300);
   g_assert_true (g_file_set_contents (path,
                                       "-- [white]\nSecond\n",
                                       -1,
@@ -198,6 +214,7 @@ test_reload_then_shutdown (void)
   g_autofree char *stderr_text = finish_process (process, EXIT_SUCCESS);
   g_assert_null (strstr (stderr_text, "pinpoint:"));
   g_assert_cmpint (g_remove (path), ==, 0);
+  g_assert_cmpint (g_remove (asset_path), ==, 0);
   g_assert_cmpint (g_rmdir (directory), ==, 0);
 }
 
