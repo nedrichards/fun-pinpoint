@@ -47,6 +47,7 @@ export G_SLICE=${G_SLICE:-always-malloc}
 
 "$build_dir/tests/test-parser" "$root/tests/fixtures/compatibility.pin"
 "$build_dir/tests/test-display-selection"
+"$build_dir/tests/test-control"
 "$build_dir/tests/test-performance"
 # The release-size budget remains in the normal Meson suite. ASan/UBSan
 # instrumentation intentionally makes the executable larger than that budget.

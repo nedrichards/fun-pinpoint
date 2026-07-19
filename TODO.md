@@ -70,14 +70,21 @@
   unsafe mode is re-enabled. This live two-screen run is the remaining
   validation requirement; physical connector events remain represented by the
   tested production selection policy rather than a synthetic compositor device.
-- [ ] Expose presentation controls through MPRIS only while presentation view
-  is active, with clear slide-oriented semantics for previous, next, and
-  play/pause. Verify that presentation mode always inhibits screen blanking and
-  locking, and that the inhibit is released promptly when presenting ends. Keep
-  standard HID clickers working through the existing arrow/Page Up/Page Down
-  controls; consider exported session D-Bus actions for trusted local tools and
-  phone/desktop MPRIS clients before adding any network-facing remote-control
-  service or permission.
+- [x] Establish the remote-control foundation independently of any transport.
+  Audience keys, speaker keys and toolbar controls, mouse buttons, standard HID
+  clickers, and delivered media-navigation keys now use one stateful action
+  model. Presentation display mode owns exactly one idle inhibitor whether
+  windowed or fullscreen; the live GNOME gate verifies flag `8`, stable
+  ownership, and release on exit.
+- [ ] Prototype remote-control adapters before choosing one for production.
+  Compare per-instance D-Bus actions, MPRIS, and a peer Varlink API; evaluate
+  Valent/KDE Connect as an existing phone and presentation-control ecosystem.
+  For a future opt-in P2P path, investigate `varlink-glib` over an authenticated
+  `GIOStream` and `librebonjour` discovery without confusing discovery with
+  pairing or granting network access by default. Keep MPRIS play/pause disabled
+  unless it truthfully represents the presentation timer, preserve independent
+  simultaneous Pinpoint processes, and require explicit lifecycle, revocation,
+  Flatpak-permission, and real-client proof before selecting an adapter.
 - [ ] Explore an optional GTK-native composition environment for authoring
   presentations. Keep `.pin` as the portable plain-text source format and
   external editors fully supported, while considering a separate experience

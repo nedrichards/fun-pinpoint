@@ -12,6 +12,14 @@ display_selection_test = executable(
 
 test('display-selection', display_selection_test)
 
+control_test = executable(
+  'test-control',
+  'test-control.c',
+  dependencies: [pinpoint_core_dep],
+)
+
+test('control', control_test)
+
 test(
   'parser',
   parser_test,

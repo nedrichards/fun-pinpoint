@@ -19,13 +19,17 @@ static const char *media_formats_fixture_path;
 static const char *corrupt_video_fixture_path;
 
 static void
-swap_displays_requested_cb (PpSpeaker *speaker,
-                            gpointer   user_data)
+control_command_cb (PpControl *control,
+                    guint      command,
+                    gboolean   requested_state,
+                    gpointer   user_data)
 {
   guint *requests = user_data;
 
-  (void) speaker;
-  (*requests)++;
+  (void) control;
+  (void) requested_state;
+  if (command == PP_CONTROL_COMMAND_SWAP_DISPLAYS)
+    (*requests)++;
 }
 static guint media_warning_count;
 
@@ -403,10 +407,12 @@ test_speaker_keeps_stage_alive (void)
     "com.nedrichards.pinpoint.LifecycleSpeakerTest");
   GtkWindow *window = GTK_WINDOW (gtk_application_window_new (application));
   GtkWidget *stage = pp_stage_new ();
+  g_autoptr (PpControl) control = pp_control_new (G_ACTION_MAP (application),
+                                                  G_ACTION_GROUP (application));
   PpSpeaker *speaker;
 
   gtk_window_set_child (window, stage);
-  speaker = pp_speaker_new (application, PP_STAGE (stage));
+  speaker = pp_speaker_new (application, PP_STAGE (stage), control);
   gtk_window_present (window);
   run_loop_for (100);
   gtk_window_destroy (window);
@@ -421,6 +427,9 @@ test_speaker_control_and_repeated_lifecycle (void)
     "com.nedrichards.pinpoint.LifecycleSpeakerControlsTest");
   GtkWindow *window = GTK_WINDOW (gtk_application_window_new (application));
   GtkWidget *stage = pp_stage_new ();
+  g_autoptr (PpControl) control = pp_control_new (G_ACTION_MAP (application),
+                                                  G_ACTION_GROUP (application));
+  guint swap_requests = 0;
 
   pp_stage_set_presentation (PP_STAGE (stage),
                              load_fixture (multi_monitor_fixture_path),
@@ -428,22 +437,27 @@ test_speaker_control_and_repeated_lifecycle (void)
   gtk_window_set_child (window, stage);
   gtk_window_present (window);
   run_loop_for (100);
+  pp_control_set_presenting (control, TRUE);
+  pp_control_set_slide (control,
+                        0,
+                        pp_presentation_get_n_slides (
+                          pp_stage_get_presentation (PP_STAGE (stage))));
+  pp_control_set_swap_displays_available (control, TRUE);
+  g_signal_connect (control,
+                    "command",
+                    G_CALLBACK (control_command_cb),
+                    &swap_requests);
 
   for (guint i = 0; i < 3; i++)
     {
       g_autoptr (PpSpeaker) speaker = pp_speaker_new (application,
-                                                      PP_STAGE (stage));
+                                                      PP_STAGE (stage),
+                                                      control);
       GtkWindow *speaker_window;
       GtkWidget *start;
       GtkWidget *pause;
       GtkWidget *autoadvance;
       GtkWidget *swap_displays;
-      guint swap_requests = 0;
-
-      pp_speaker_set_swap_displays_request_func (
-        speaker,
-        swap_displays_requested_cb,
-        &swap_requests);
       pp_speaker_show (speaker);
       run_loop_for (100);
       g_assert_true (pp_speaker_is_visible (speaker));
@@ -461,17 +475,16 @@ test_speaker_control_and_repeated_lifecycle (void)
       g_signal_emit_by_name (pause, "clicked");
       g_signal_emit_by_name (pause, "clicked");
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (autoadvance), TRUE);
-      pp_speaker_set_swap_displays_available (speaker, TRUE);
       g_signal_emit_by_name (swap_displays, "clicked");
-      g_assert_cmpuint (swap_requests, ==, 1);
+      g_assert_cmpuint (swap_requests, ==, i + 1);
       pp_speaker_set_fullscreen (speaker, TRUE, NULL);
       run_loop_for (75);
       pp_speaker_set_fullscreen (speaker, FALSE, NULL);
       run_loop_for (75);
-      pp_speaker_toggle (speaker);
+      pp_speaker_set_visible (speaker, FALSE);
       run_loop_for (75);
       g_assert_false (pp_speaker_is_visible (speaker));
-      pp_speaker_toggle (speaker);
+      pp_speaker_set_visible (speaker, TRUE);
       run_loop_for (75);
       g_assert_true (pp_speaker_is_visible (speaker));
       g_clear_pointer (&speaker, pp_speaker_free);

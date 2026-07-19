@@ -1,5 +1,6 @@
 #include "config.h"
 
+#include "pp-control.h"
 #include "pp-display-selection.h"
 #include "pp-file-access.h"
 #include "pp-introduction.h"
@@ -26,6 +27,7 @@ typedef struct
   GtkApplication *application;
   GtkWindow *window;
   PpStage *stage;
+  PpControl *control;
   GtkOverlay *overlay;
   GtkEntry *command_entry;
   GtkStack *view_stack;
@@ -50,6 +52,7 @@ typedef struct
   gboolean rehearse;
   gboolean exporting_pdf;
   gboolean bundled_read_only;
+  gboolean presenting;
   PpPdfOptions pdf_options;
   char *camera_device;
   GListModel *monitors;
@@ -61,6 +64,10 @@ typedef struct
 
 static void set_fullscreen (Pinpoint *pinpoint,
                             gboolean  fullscreen);
+static void set_speaker_visible (Pinpoint *pinpoint,
+                                 gboolean  visible);
+static void set_presenting (Pinpoint *pinpoint,
+                            gboolean  presenting);
 static void open_presentation_folder_dialog (Pinpoint *pinpoint);
 
 static gboolean
@@ -90,12 +97,7 @@ application_shutdown_cb (GApplication *application,
   Pinpoint *pinpoint = user_data;
 
   (void) application;
-  if (pinpoint->inhibit_cookie != 0)
-    {
-      gtk_application_uninhibit (pinpoint->application,
-                                 pinpoint->inhibit_cookie);
-      pinpoint->inhibit_cookie = 0;
-    }
+  set_presenting (pinpoint, FALSE);
 }
 
 static void
@@ -226,6 +228,10 @@ slide_changed_cb (PpStage *stage,
   const PpPresentation *presentation = pp_stage_get_presentation (stage);
   const PpSlide *slide = pp_presentation_get_slide (presentation, index);
   gboolean text_at_bottom;
+
+  pp_control_set_slide (pinpoint->control,
+                        index,
+                        pp_presentation_get_n_slides (presentation));
 
   gtk_editable_set_text (GTK_EDITABLE (pinpoint->command_entry),
                          slide->command != NULL ? slide->command : "");
@@ -369,11 +375,9 @@ start_loaded_presentation (Pinpoint *pinpoint)
 
   start_monitor (pinpoint);
   gtk_stack_set_visible_child_name (pinpoint->view_stack, "presentation");
-  if (pinpoint->speaker_mode)
-    pp_speaker_show (pinpoint->speaker);
+  set_presenting (pinpoint, TRUE);
+  set_speaker_visible (pinpoint, pinpoint->speaker_mode);
   set_fullscreen (pinpoint, pinpoint->fullscreen);
-  if (pinpoint->speaker_mode)
-    pp_speaker_show (pinpoint->speaker);
   if (pinpoint->rehearse)
     {
       g_print ("Running in rehearsal mode; finish the final slide to save timings\n");
@@ -1490,6 +1494,36 @@ get_audience_monitor (Pinpoint  *pinpoint,
 }
 
 static void
+set_presenting (Pinpoint *pinpoint,
+                gboolean  presenting)
+{
+  presenting = !!presenting;
+  if (pinpoint->presenting == presenting)
+    return;
+
+  pinpoint->presenting = presenting;
+  if (pinpoint->control != NULL)
+    pp_control_set_presenting (pinpoint->control, presenting);
+  if (presenting)
+    {
+      if (pinpoint->inhibit_cookie == 0)
+        pinpoint->inhibit_cookie = gtk_application_inhibit (
+          pinpoint->application,
+          pinpoint->window,
+          GTK_APPLICATION_INHIBIT_IDLE,
+          "Presenting slides");
+      if (pinpoint->inhibit_cookie == 0)
+        g_warning ("Unable to inhibit screen blanking and locking");
+    }
+  else if (pinpoint->inhibit_cookie != 0)
+    {
+      gtk_application_uninhibit (pinpoint->application,
+                                 pinpoint->inhibit_cookie);
+      pinpoint->inhibit_cookie = 0;
+    }
+}
+
+static void
 set_fullscreen (Pinpoint *pinpoint,
                 gboolean  fullscreen)
 {
@@ -1499,12 +1533,13 @@ set_fullscreen (Pinpoint *pinpoint,
   fullscreen = !!fullscreen;
   speaker_visible = pp_speaker_is_visible (pinpoint->speaker);
   monitor_count = g_list_model_get_n_items (pinpoint->monitors);
-  pp_speaker_set_swap_displays_available (pinpoint->speaker,
+  pp_control_set_swap_displays_available (pinpoint->control,
                                           fullscreen &&
                                           speaker_visible &&
                                           monitor_count > 1);
 
   pinpoint->fullscreen = fullscreen;
+  pp_control_set_fullscreen (pinpoint->control, fullscreen);
   if (fullscreen)
     {
       if (speaker_visible && monitor_count > 1)
@@ -1530,47 +1565,32 @@ set_fullscreen (Pinpoint *pinpoint,
           if (speaker_visible)
             pp_speaker_set_fullscreen (pinpoint->speaker, FALSE, NULL);
         }
-      if (pinpoint->inhibit_cookie == 0)
-        pinpoint->inhibit_cookie = gtk_application_inhibit (
-          pinpoint->application,
-          pinpoint->window,
-          GTK_APPLICATION_INHIBIT_IDLE,
-          "Presenting slides");
     }
   else
     {
       gtk_window_unfullscreen (pinpoint->window);
       pp_speaker_set_fullscreen (pinpoint->speaker, FALSE, NULL);
-      if (pinpoint->inhibit_cookie != 0)
-        {
-          gtk_application_uninhibit (pinpoint->application,
-                                     pinpoint->inhibit_cookie);
-          pinpoint->inhibit_cookie = 0;
-        }
     }
 }
 
 static void
-speaker_fullscreen_requested_cb (PpSpeaker *speaker,
-                                 gboolean   fullscreen,
-                                 gpointer   user_data)
+set_speaker_visible (Pinpoint *pinpoint,
+                     gboolean  visible)
 {
-  Pinpoint *pinpoint = user_data;
-
-  (void) speaker;
-  (void) fullscreen;
-  set_fullscreen (pinpoint, !pinpoint->fullscreen);
+  visible = !!visible;
+  pp_speaker_set_visible (pinpoint->speaker, visible);
+  pinpoint->speaker_mode = visible;
+  pp_control_set_speaker (pinpoint->control, visible);
+  if (pinpoint->fullscreen)
+    set_fullscreen (pinpoint, TRUE);
 }
 
 static void
-speaker_swap_displays_requested_cb (PpSpeaker *speaker,
-                                    gpointer   user_data)
+swap_displays (Pinpoint *pinpoint)
 {
-  Pinpoint *pinpoint = user_data;
   GdkMonitor *presenter_monitor;
   g_autoptr (GdkMonitor) audience_monitor = NULL;
 
-  (void) speaker;
   if (!pinpoint->fullscreen ||
       !pp_speaker_is_visible (pinpoint->speaker) ||
       g_list_model_get_n_items (pinpoint->monitors) < 2)
@@ -1585,6 +1605,45 @@ speaker_swap_displays_requested_cb (PpSpeaker *speaker,
   g_set_object (&pinpoint->presenter_monitor, audience_monitor);
   update_monitor_choices (pinpoint);
   set_fullscreen (pinpoint, TRUE);
+}
+
+static void
+control_command_cb (PpControl       *control,
+                    guint            command,
+                    gboolean         requested_state,
+                    gpointer         user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  (void) control;
+  switch ((PpControlCommand) command)
+    {
+    case PP_CONTROL_COMMAND_NEXT:
+      pp_stage_next (pinpoint->stage);
+      break;
+    case PP_CONTROL_COMMAND_PREVIOUS:
+      pp_stage_previous (pinpoint->stage);
+      break;
+    case PP_CONTROL_COMMAND_FIRST:
+      pp_stage_first (pinpoint->stage);
+      break;
+    case PP_CONTROL_COMMAND_SET_BLANK:
+      pp_stage_set_blank (pinpoint->stage, requested_state);
+      pp_control_set_blank (pinpoint->control,
+                            pp_stage_get_blank (pinpoint->stage));
+      break;
+    case PP_CONTROL_COMMAND_SET_FULLSCREEN:
+      set_fullscreen (pinpoint, requested_state);
+      break;
+    case PP_CONTROL_COMMAND_SET_SPEAKER:
+      set_speaker_visible (pinpoint, requested_state);
+      break;
+    case PP_CONTROL_COMMAND_SWAP_DISPLAYS:
+      swap_displays (pinpoint);
+      break;
+    default:
+      g_assert_not_reached ();
+    }
 }
 
 static void
@@ -1621,22 +1680,6 @@ monitors_changed_cb (GListModel *model,
     set_fullscreen (pinpoint, TRUE);
 }
 
-static void
-toggle_speaker (Pinpoint *pinpoint)
-{
-  if (pp_speaker_is_visible (pinpoint->speaker))
-    pp_speaker_toggle (pinpoint->speaker);
-  else
-    {
-      pp_speaker_show (pinpoint->speaker);
-      if (pinpoint->fullscreen)
-        {
-          set_fullscreen (pinpoint, TRUE);
-          pp_speaker_show (pinpoint->speaker);
-        }
-    }
-}
-
 static gboolean
 key_pressed_cb (GtkEventControllerKey *controller,
                 guint                  keyval,
@@ -1650,42 +1693,17 @@ key_pressed_cb (GtkEventControllerKey *controller,
   (void) keycode;
   (void) state;
 
+  if (pp_control_handle_key (pinpoint->control,
+                             keyval,
+                             PP_CONTROL_KEY_AUDIENCE))
+    return GDK_EVENT_STOP;
+
   switch (keyval)
     {
-    case GDK_KEY_Left:
-    case GDK_KEY_Up:
-    case GDK_KEY_BackSpace:
-    case GDK_KEY_Page_Up:
-      pp_stage_previous (pinpoint->stage);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_Right:
-    case GDK_KEY_Down:
-    case GDK_KEY_space:
-    case GDK_KEY_Page_Down:
-      pp_stage_next (pinpoint->stage);
-      return GDK_EVENT_STOP;
-
     case GDK_KEY_Escape:
     case GDK_KEY_q:
     case GDK_KEY_Q:
       g_application_quit (G_APPLICATION (pinpoint->application));
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_F11:
-    case GDK_KEY_f:
-    case GDK_KEY_F:
-      set_fullscreen (pinpoint, !pinpoint->fullscreen);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_F1:
-      toggle_speaker (pinpoint);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_b:
-    case GDK_KEY_B:
-      pp_stage_set_blank (pinpoint->stage,
-                          !pp_stage_get_blank (pinpoint->stage));
       return GDK_EVENT_STOP;
 
     case GDK_KEY_Return:
@@ -1699,12 +1717,6 @@ key_pressed_cb (GtkEventControllerKey *controller,
       gtk_widget_set_opacity (GTK_WIDGET (pinpoint->command_entry), 1.0);
       gtk_widget_grab_focus (GTK_WIDGET (pinpoint->command_entry));
       gtk_editable_select_region (GTK_EDITABLE (pinpoint->command_entry), 0, -1);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_h:
-    case GDK_KEY_H:
-    case GDK_KEY_Home:
-      pp_stage_first (pinpoint->stage);
       return GDK_EVENT_STOP;
 
     default:
@@ -1727,9 +1739,9 @@ mouse_pressed_cb (GtkGestureClick *gesture,
   (void) y;
 
   if (button == GDK_BUTTON_PRIMARY)
-    pp_stage_next (pinpoint->stage);
+    pp_control_activate (pinpoint->control, PP_CONTROL_ACTION_NEXT);
   else if (button == GDK_BUTTON_SECONDARY)
-    pp_stage_previous (pinpoint->stage);
+    pp_control_activate (pinpoint->control, PP_CONTROL_ACTION_PREVIOUS);
 }
 
 static gboolean
@@ -1829,6 +1841,13 @@ activate_cb (GtkApplication *application,
                     G_CALLBACK (slide_changed_cb),
                     pinpoint);
 
+  pinpoint->control = pp_control_new (G_ACTION_MAP (application),
+                                      G_ACTION_GROUP (application));
+  g_signal_connect (pinpoint->control,
+                    "command",
+                    G_CALLBACK (control_command_cb),
+                    pinpoint);
+
   keys = gtk_event_controller_key_new ();
   g_signal_connect (keys, "key-pressed", G_CALLBACK (key_pressed_cb), pinpoint);
   gtk_widget_add_controller (GTK_WIDGET (pinpoint->stage), keys);
@@ -1843,14 +1862,9 @@ activate_cb (GtkApplication *application,
   g_signal_connect (motion, "leave", G_CALLBACK (motion_leave_cb), pinpoint);
   gtk_widget_add_controller (GTK_WIDGET (pinpoint->stage), motion);
 
-  pinpoint->speaker = pp_speaker_new (application, pinpoint->stage);
-  pp_speaker_set_fullscreen_request_func (pinpoint->speaker,
-                                          speaker_fullscreen_requested_cb,
-                                          pinpoint);
-  pp_speaker_set_swap_displays_request_func (
-    pinpoint->speaker,
-    speaker_swap_displays_requested_cb,
-    pinpoint);
+  pinpoint->speaker = pp_speaker_new (application,
+                                      pinpoint->stage,
+                                      pinpoint->control);
   pinpoint->monitors = g_object_ref (
     gdk_display_get_monitors (gtk_widget_get_display (
       GTK_WIDGET (pinpoint->window))));
@@ -1895,6 +1909,7 @@ activate_cb (GtkApplication *application,
 static void
 pinpoint_clear (Pinpoint *pinpoint)
 {
+  set_presenting (pinpoint, FALSE);
   if (pinpoint->reload_id != 0)
     g_source_remove (pinpoint->reload_id);
   if (pinpoint->hide_cursor_id != 0)
@@ -1909,8 +1924,6 @@ pinpoint_clear (Pinpoint *pinpoint)
       g_source_remove (pinpoint->sigterm_id);
       pinpoint->sigterm_id = 0;
     }
-  if (pinpoint->inhibit_cookie != 0)
-    gtk_application_uninhibit (pinpoint->application, pinpoint->inhibit_cookie);
   g_clear_object (&pinpoint->monitor);
   g_clear_object (&pinpoint->file);
   g_clear_object (&pinpoint->presentation_folder);
@@ -1922,6 +1935,7 @@ pinpoint_clear (Pinpoint *pinpoint)
   g_clear_object (&pinpoint->monitors);
   g_clear_pointer (&pinpoint->setup_monitor_choices, g_ptr_array_unref);
   g_clear_pointer (&pinpoint->speaker, pp_speaker_free);
+  g_clear_object (&pinpoint->control);
   if (pinpoint->window != NULL)
     {
       gtk_window_destroy (pinpoint->window);

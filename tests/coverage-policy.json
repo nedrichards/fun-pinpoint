@@ -37,6 +37,11 @@
     "src/main.c": {
       "uncovered_lines": 625
     },
+    "src/pp-control.c": {
+      "uncovered_branches": 43,
+      "uncovered_functions": 0,
+      "uncovered_lines": 0
+    },
     "src/pp-display-selection.c": {
       "uncovered_lines": 0
     },

@@ -12,10 +12,10 @@ tests/run-coverage.sh
 
 The runner creates `_build-coverage` with Meson's `b_coverage` option, deletes
 stale counters, and builds in the SDK. It then executes the parser, rendering,
-display-selection, performance, pixel-profile, lifecycle, and whole-application
-tests directly on the host while resolving their libraries and GStreamer
-helpers from that exact SDK commit and its automatically installed codec
-extension. It also resolves
+display-selection, presentation-control, performance, pixel-profile, lifecycle,
+and whole-application tests directly on the host while resolving their
+libraries and GStreamer helpers from that exact SDK commit and its automatically
+installed codec extension. It also resolves
 the active EGL, DRI, GBM, and Vulkan paths from the Flatpak GL extension version
 declared by the SDK. A missing extension or failed OpenGL 3.3 page-curl context
 is a test failure, not a skip or software fallback.
@@ -53,12 +53,19 @@ GTK/Mutter callback boundary; `tests/run-host-display-test.sh` validates that
 boundary in an explicitly enabled GNOME host session and is intentionally not
 folded into the sandbox-safe coverage number.
 
+The control policy is separately covered for enabled state, slide bounds,
+stateful actions, audience/speaker key contexts, conventional clicker keys,
+media navigation keys, and action cleanup. The GNOME inhibitor registry is an
+integration boundary covered by `tests/run-host-inhibit-test.sh`, not by line
+coverage.
+
 The parser line ratchet retains defensive fallbacks for content types which
 GLib cannot map to a MIME type. Normal file and URI guesses do not produce that
 state in the test environment, so the guards remain explicitly uncovered.
 
 The current deterministic line gates include:
 
+- `pp-control.c`: 100% executable lines and functions.
 - `pp-page-curl.c`: 100% executable lines.
 - `pp-render.c`: 100% reachable lines after its exhaustive-enum abort arm.
 - `pp-file-access.c`: 100% reachable lines after its injected-enumerator-failure

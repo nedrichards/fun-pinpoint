@@ -166,6 +166,7 @@ struct _PpSpeaker
 {
   GtkApplication *application;
   PpStage *audience_stage;
+  PpControl *control;
   GtkWindow *window;
   PpStage *previous_preview;
   PpStage *current_preview;
@@ -192,10 +193,6 @@ struct _PpSpeaker
   double slide_plan_start;
   double slide_plan_duration;
   double warning_opacity;
-  PpSpeakerFullscreenRequestFunc fullscreen_request;
-  gpointer fullscreen_request_data;
-  PpSpeakerSwapDisplaysRequestFunc swap_displays_request;
-  gpointer swap_displays_request_data;
 };
 
 static void update_previews (PpSpeaker *self);
@@ -505,33 +502,6 @@ pause_cb (GtkButton *button,
     }
 }
 
-static void
-fullscreen_cb (GtkButton *button,
-               gpointer   user_data)
-{
-  PpSpeaker *self = user_data;
-  gboolean fullscreen = !gtk_window_is_fullscreen (self->window);
-
-  (void) button;
-  if (self->fullscreen_request != NULL)
-    self->fullscreen_request (self,
-                              fullscreen,
-                              self->fullscreen_request_data);
-  else
-    pp_speaker_set_fullscreen (self, fullscreen, NULL);
-}
-
-static void
-swap_displays_cb (GtkButton *button,
-                  gpointer   user_data)
-{
-  PpSpeaker *self = user_data;
-
-  (void) button;
-  if (self->swap_displays_request != NULL)
-    self->swap_displays_request (self, self->swap_displays_request_data);
-}
-
 static gboolean
 key_pressed_cb (GtkEventControllerKey *controller,
                 guint                  keyval,
@@ -544,69 +514,16 @@ key_pressed_cb (GtkEventControllerKey *controller,
   (void) controller;
   (void) keycode;
   (void) state;
-  switch (keyval)
+  if (pp_control_handle_key (self->control,
+                             keyval,
+                             PP_CONTROL_KEY_SPEAKER))
+    return GDK_EVENT_STOP;
+  if (keyval == GDK_KEY_Escape || keyval == GDK_KEY_q || keyval == GDK_KEY_Q)
     {
-    case GDK_KEY_Left:
-    case GDK_KEY_Up:
-    case GDK_KEY_BackSpace:
-    case GDK_KEY_Page_Up:
-      pp_stage_previous (self->audience_stage);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_Right:
-    case GDK_KEY_Down:
-    case GDK_KEY_space:
-    case GDK_KEY_Page_Down:
-      pp_stage_next (self->audience_stage);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_F11:
-    case GDK_KEY_f:
-    case GDK_KEY_F:
-      fullscreen_cb (NULL, self);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_s:
-    case GDK_KEY_S:
-      if (gtk_widget_is_sensitive (GTK_WIDGET (self->swap_displays_button)))
-        swap_displays_cb (NULL, self);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_F1:
-      gtk_widget_set_visible (GTK_WIDGET (self->window), FALSE);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_b:
-    case GDK_KEY_B:
-      pp_stage_set_blank (self->audience_stage,
-                          !pp_stage_get_blank (self->audience_stage));
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_h:
-    case GDK_KEY_H:
-    case GDK_KEY_Home:
-      pp_stage_first (self->audience_stage);
-      return GDK_EVENT_STOP;
-
-    case GDK_KEY_Escape:
-    case GDK_KEY_q:
-    case GDK_KEY_Q:
       g_application_quit (G_APPLICATION (self->application));
       return GDK_EVENT_STOP;
-
-    default:
-      return GDK_EVENT_PROPAGATE;
     }
-}
-
-static void
-hide_cb (GtkButton *button,
-         gpointer   user_data)
-{
-  PpSpeaker *self = user_data;
-
-  (void) button;
-  gtk_widget_set_visible (GTK_WIDGET (self->window), FALSE);
+  return GDK_EVENT_PROPAGATE;
 }
 
 static gboolean
@@ -616,7 +533,7 @@ close_request_cb (GtkWindow *window,
   PpSpeaker *self = user_data;
 
   (void) window;
-  gtk_widget_set_visible (GTK_WIDGET (self->window), FALSE);
+  pp_control_activate (self->control, PP_CONTROL_ACTION_SPEAKER);
   return TRUE;
 }
 
@@ -662,7 +579,8 @@ make_preview (PpStage    **out_preview,
 
 PpSpeaker *
 pp_speaker_new (GtkApplication *application,
-                PpStage         *audience_stage)
+                PpStage         *audience_stage,
+                PpControl       *control)
 {
   PpSpeaker *self;
   GtkWidget *root;
@@ -678,10 +596,12 @@ pp_speaker_new (GtkApplication *application,
 
   g_return_val_if_fail (GTK_IS_APPLICATION (application), NULL);
   g_return_val_if_fail (PP_IS_STAGE (audience_stage), NULL);
+  g_return_val_if_fail (PP_IS_CONTROL (control), NULL);
 
   self = g_new0 (PpSpeaker, 1);
   self->application = application;
   self->audience_stage = g_object_ref (audience_stage);
+  self->control = g_object_ref (control);
   self->timer = g_timer_new ();
   g_timer_stop (self->timer);
 
@@ -737,7 +657,8 @@ pp_speaker_new (GtkApplication *application,
   gtk_overlay_add_overlay (GTK_OVERLAY (root), toolbar);
 
   button = gtk_button_new_with_label ("Hide Speaker View");
-  g_signal_connect (button, "clicked", G_CALLBACK (hide_cb), self);
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (button),
+                                  "app." PP_CONTROL_ACTION_SPEAKER);
   gtk_box_append (GTK_BOX (toolbar), button);
   self->start_button = GTK_BUTTON (gtk_button_new_with_label ("Start"));
   g_signal_connect (self->start_button, "clicked", G_CALLBACK (start_cb), self);
@@ -763,18 +684,16 @@ pp_speaker_new (GtkApplication *application,
     GTK_ACCESSIBLE (self->swap_displays_button),
     GTK_ACCESSIBLE_PROPERTY_KEY_SHORTCUTS, "S",
     -1);
-  gtk_widget_set_sensitive (GTK_WIDGET (self->swap_displays_button), FALSE);
-  g_signal_connect (self->swap_displays_button,
-                    "clicked",
-                    G_CALLBACK (swap_displays_cb),
-                    self);
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (self->swap_displays_button),
+                                  "app." PP_CONTROL_ACTION_SWAP_DISPLAYS);
   gtk_box_append (GTK_BOX (toolbar), GTK_WIDGET (self->swap_displays_button));
   button = gtk_button_new_with_label ("Fullscreen");
   gtk_accessible_update_property (GTK_ACCESSIBLE (button),
                                   GTK_ACCESSIBLE_PROPERTY_KEY_SHORTCUTS,
                                   "F11",
                                   -1);
-  g_signal_connect (button, "clicked", G_CALLBACK (fullscreen_cb), self);
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (button),
+                                  "app." PP_CONTROL_ACTION_FULLSCREEN);
   gtk_box_append (GTK_BOX (toolbar), button);
 
   progress = gtk_overlay_new ();
@@ -836,6 +755,7 @@ pp_speaker_free (PpSpeaker *self)
     gtk_widget_realize (GTK_WIDGET (self->window));
   gtk_window_destroy (self->window);
   g_clear_object (&self->audience_stage);
+  g_clear_object (&self->control);
   g_clear_pointer (&self->rehearsal_presentation, pp_presentation_free);
   g_timer_destroy (self->timer);
   g_free (self);
@@ -850,13 +770,14 @@ pp_speaker_show (PpSpeaker *self)
 }
 
 void
-pp_speaker_toggle (PpSpeaker *self)
+pp_speaker_set_visible (PpSpeaker *self,
+                        gboolean   visible)
 {
   g_return_if_fail (self != NULL);
-  if (gtk_widget_get_visible (GTK_WIDGET (self->window)))
-    gtk_widget_set_visible (GTK_WIDGET (self->window), FALSE);
-  else
+  if (visible)
     pp_speaker_show (self);
+  else
+    gtk_widget_set_visible (GTK_WIDGET (self->window), FALSE);
 }
 
 gboolean
@@ -880,37 +801,6 @@ pp_speaker_set_fullscreen (PpSpeaker *self,
     gtk_window_fullscreen (self->window);
   else
     gtk_window_unfullscreen (self->window);
-}
-
-void
-pp_speaker_set_fullscreen_request_func (
-  PpSpeaker                       *self,
-  PpSpeakerFullscreenRequestFunc   callback,
-  gpointer                         user_data)
-{
-  g_return_if_fail (self != NULL);
-  self->fullscreen_request = callback;
-  self->fullscreen_request_data = user_data;
-}
-
-void
-pp_speaker_set_swap_displays_request_func (
-  PpSpeaker                         *self,
-  PpSpeakerSwapDisplaysRequestFunc   callback,
-  gpointer                           user_data)
-{
-  g_return_if_fail (self != NULL);
-  self->swap_displays_request = callback;
-  self->swap_displays_request_data = user_data;
-}
-
-void
-pp_speaker_set_swap_displays_available (PpSpeaker *self,
-                                        gboolean   available)
-{
-  g_return_if_fail (self != NULL);
-  gtk_widget_set_sensitive (GTK_WIDGET (self->swap_displays_button),
-                            available);
 }
 
 void

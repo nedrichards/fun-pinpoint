@@ -47,6 +47,8 @@ camera, image, SVG, text, colour, and hardware-acceleration details. The
 audio combinations covered by the production Flatpak and its fixtures. See
 [accessibility](docs/accessibility.md) for stage and speaker-view semantics,
 keyboard and reduced-motion behaviour, and the remaining authoring limitation.
+The [remote-control architecture](docs/remote-control.md) documents the shared
+presentation actions, idle-inhibit contract, and transport evaluation plan.
 
 ### Sanitizers and leak detection
 
@@ -159,6 +161,7 @@ copy with all of its assets.
 
 - Right, Down, Space, Page Down, or primary click: next slide
 - Left, Up, Backspace, Page Up, or secondary click: previous slide
+- Forward/back or media next/previous: navigate when delivered to the app
 - F or F11: fullscreen
 - F1: speaker view
 - S in the speaker view: swap the audience and speaker displays
@@ -174,6 +177,9 @@ audience and speaker displays while presenting fullscreen on two or more
 screens. Additional displays are left untouched. Rehearsal timings are written
 back only after advancing past the final slide. The real GNOME two-screen path
 has a separate [host display automation runner](docs/host-display-automation.md).
+While a presentation is displayed, Pinpoint inhibits session idling, screen
+blanking, and automatic locking even when it is windowed. The live GNOME
+inhibitor lifecycle is checked by `tests/run-host-inhibit-test.sh`.
 
 ## License
 

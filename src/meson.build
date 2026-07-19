@@ -9,6 +9,8 @@ pinpoint_resources = gnome.compile_resources(
 pinpoint_core_sources = files(
   'pp-file-access.c',
   'pp-file-access.h',
+  'pp-control.c',
+  'pp-control.h',
   'pp-display-selection.c',
   'pp-display-selection.h',
   'pp-introduction.c',
