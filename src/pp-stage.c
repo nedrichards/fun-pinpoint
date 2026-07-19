@@ -65,6 +65,7 @@ struct _PpStage
   gboolean blank;
   gboolean media_enabled;
   gboolean audio_enabled;
+  char *accessible_context;
 
   gboolean transitioning;
   gboolean backwards;
@@ -99,6 +100,61 @@ enum
 };
 
 static guint signals[N_SIGNALS];
+
+static char *
+slide_accessible_text (const PpSlide *slide)
+{
+  char *text = NULL;
+
+  if (slide->text == NULL || slide->text[0] == '\0')
+    return NULL;
+  if (slide->use_markup &&
+      pango_parse_markup (slide->text, -1, 0, NULL, &text, NULL, NULL))
+    return g_strstrip (text);
+  g_clear_pointer (&text, g_free);
+  return g_strstrip (g_strdup (slide->text));
+}
+
+static void
+update_accessibility (PpStage *self)
+{
+  const char *context = self->accessible_context != NULL
+    ? self->accessible_context
+    : "Presentation slide";
+  g_autofree char *label = NULL;
+  g_autofree char *description = NULL;
+
+  if (self->presentation == NULL)
+    {
+      label = g_strdup (context);
+      description = g_strdup ("No presentation loaded");
+    }
+  else
+    {
+      const PpSlide *slide = pp_presentation_get_slide (self->presentation,
+                                                        self->current_slide);
+      guint count = pp_presentation_get_n_slides (self->presentation);
+
+      label = g_strdup_printf ("%s %u of %u",
+                               context,
+                               self->current_slide + 1,
+                               count);
+      description = self->blank
+        ? g_strdup ("Blank screen")
+        : slide_accessible_text (slide);
+      if (description == NULL || description[0] == '\0')
+        {
+          g_clear_pointer (&description, g_free);
+          description = g_strdup ("Slide has no audience text");
+        }
+    }
+
+  gtk_accessible_update_property (
+    GTK_ACCESSIBLE (self),
+    GTK_ACCESSIBLE_PROPERTY_LABEL, label,
+    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, description,
+    -1);
+}
 
 static void
 cached_text_free (PpCachedText *cached)
@@ -1730,6 +1786,7 @@ pp_stage_dispose (GObject *object)
   g_clear_object (&self->portal_connection);
   g_clear_pointer (&self->camera_request_path, g_free);
   g_clear_pointer (&self->camera_device, g_free);
+  g_clear_pointer (&self->accessible_context, g_free);
   if (self->curl_view != NULL)
     {
       gtk_widget_unparent (GTK_WIDGET (self->curl_view));
@@ -1749,6 +1806,8 @@ pp_stage_class_init (PpStageClass *klass)
   widget_class->size_allocate = pp_stage_size_allocate;
   widget_class->snapshot = pp_stage_snapshot;
   gtk_widget_class_set_css_name (widget_class, "pinpoint-stage");
+  gtk_widget_class_set_accessible_role (widget_class,
+                                        GTK_ACCESSIBLE_ROLE_GROUP);
 
   signals[SLIDE_CHANGED] =
     g_signal_new ("slide-changed",
@@ -1806,8 +1865,18 @@ pp_stage_init (PpStage *self)
   gtk_widget_set_parent (GTK_WIDGET (self->curl_view), GTK_WIDGET (self));
   self->media_enabled = TRUE;
   self->audio_enabled = TRUE;
+  self->accessible_context = g_strdup ("Presentation slide");
   gtk_widget_set_focusable (GTK_WIDGET (self), TRUE);
   gtk_widget_set_overflow (GTK_WIDGET (self), GTK_OVERFLOW_HIDDEN);
+  gtk_accessible_update_property (
+    GTK_ACCESSIBLE (self),
+    GTK_ACCESSIBLE_PROPERTY_KEY_SHORTCUTS,
+    "Left Right Up Down PageUp PageDown Space F11 F1 B H Home Enter Tab Escape Q",
+    GTK_ACCESSIBLE_PROPERTY_HELP_TEXT,
+    "Use the arrow or page keys to change slide; F11 for fullscreen; F1 for "
+    "speaker view; B to blank; H for the first slide; and Escape to quit.",
+    -1);
+  update_accessibility (self);
 }
 
 GtkWidget *
@@ -1847,6 +1916,7 @@ pp_stage_set_presentation (PpStage        *self,
   g_hash_table_remove_all (self->media);
   g_hash_table_remove_all (self->legacy_transitions);
   g_hash_table_remove_all (self->failed_transitions);
+  update_accessibility (self);
   gtk_widget_queue_draw (GTK_WIDGET (self));
   g_signal_emit (self, signals[SLIDE_CHANGED], 0, self->current_slide);
 }
@@ -1895,7 +1965,18 @@ go_to_slide (PpStage  *self,
                          new_slide,
                          TRUE,
                          backwards));
+  {
+    gboolean animations_enabled = TRUE;
+
+    g_object_get (gtk_widget_get_settings (GTK_WIDGET (self)),
+                  "gtk-enable-animations",
+                  &animations_enabled,
+                  NULL);
+    if (!animations_enabled)
+      self->transition_duration_ms = 0;
+  }
   self->transitioning = self->transition_duration_ms > 0;
+  update_accessibility (self);
   if (uses_page_curl (old_slide, FALSE) || uses_page_curl (new_slide, TRUE))
     gtk_widget_set_visible (GTK_WIDGET (self->curl_view), TRUE);
 
@@ -1955,7 +2036,22 @@ pp_stage_set_blank (PpStage  *self,
   if (self->blank == blank)
     return;
   self->blank = blank;
+  update_accessibility (self);
   gtk_widget_queue_draw (GTK_WIDGET (self));
+}
+
+void
+pp_stage_set_accessible_context (PpStage    *self,
+                                 const char *context)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  g_return_if_fail (context != NULL && context[0] != '\0');
+
+  if (g_strcmp0 (self->accessible_context, context) == 0)
+    return;
+  g_free (self->accessible_context);
+  self->accessible_context = g_strdup (context);
+  update_accessibility (self);
 }
 
 gboolean

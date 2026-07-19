@@ -1,5 +1,6 @@
 #include "config.h"
 
+#include "pp-display-selection.h"
 #include "pp-file-access.h"
 #include "pp-introduction.h"
 #include "pp-presentation.h"
@@ -1196,7 +1197,7 @@ about_action_cb (GSimpleAction *action,
   adw_about_dialog_set_version (dialog, PINPOINT_VERSION);
   adw_about_dialog_set_comments (
     dialog,
-    "Create image-led presentations from concise plain-text files.");
+    "Help hackers give excellent presentations with concise plain-text files.");
   adw_about_dialog_set_website (dialog,
                                 "https://github.com/nedrichards/fun-pinpoint");
   adw_about_dialog_set_issue_url (
@@ -1277,6 +1278,10 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_menu_button_set_menu_model (GTK_MENU_BUTTON (menu_button),
                                   G_MENU_MODEL (menu));
   gtk_widget_set_tooltip_text (menu_button, "Main Menu");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (menu_button),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Main Menu",
+                                  -1);
   adw_header_bar_pack_end (ADW_HEADER_BAR (header), menu_button);
   adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar), header);
   adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar), scrolled);
@@ -1322,6 +1327,10 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_widget_set_valign (save_introduction, GTK_ALIGN_CENTER);
   gtk_widget_add_css_class (save_introduction, "flat");
   gtk_widget_set_tooltip_text (save_introduction, "Save an Editable Copy");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (save_introduction),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Save an Editable Copy",
+                                  -1);
   adw_action_row_add_suffix (ADW_ACTION_ROW (learn_row), save_introduction);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (learn_group), learn_row);
   gtk_box_append (GTK_BOX (content), learn_group);
@@ -1415,43 +1424,48 @@ monitor_at_window (GtkWindow *window)
   return gdk_display_get_monitor_at_surface (display, surface);
 }
 
+static PpDisplayCandidate *
+collect_monitor_candidates (Pinpoint *pinpoint,
+                            guint    *count)
+{
+  PpDisplayCandidate *candidates;
+
+  *count = g_list_model_get_n_items (pinpoint->monitors);
+  candidates = g_new0 (PpDisplayCandidate, *count);
+  for (guint i = 0; i < *count; i++)
+    {
+      GdkMonitor *monitor = g_list_model_get_item (pinpoint->monitors, i);
+
+      candidates[i].display = monitor;
+      candidates[i].builtin = monitor_is_builtin (monitor);
+    }
+  return candidates;
+}
+
+static void
+free_monitor_candidates (PpDisplayCandidate *candidates,
+                         guint               count)
+{
+  for (guint i = 0; i < count; i++)
+    g_object_unref ((gpointer) candidates[i].display);
+  g_free (candidates);
+}
+
 static GdkMonitor *
 get_presenter_monitor (Pinpoint *pinpoint)
 {
-  guint count = g_list_model_get_n_items (pinpoint->monitors);
+  guint count;
+  PpDisplayCandidate *candidates = collect_monitor_candidates (pinpoint,
+                                                                &count);
+  gconstpointer selected = pp_display_selection_presenter (
+    candidates,
+    count,
+    pinpoint->audience_monitor,
+    pinpoint->presenter_monitor,
+    monitor_at_window (pinpoint->window));
 
-  if (pinpoint->presenter_monitor != NULL &&
-      gdk_monitor_is_valid (pinpoint->presenter_monitor) &&
-      pinpoint->presenter_monitor != pinpoint->audience_monitor)
-    return pinpoint->presenter_monitor;
-
-  g_clear_object (&pinpoint->presenter_monitor);
-  for (guint i = 0; i < count; i++)
-    {
-      g_autoptr (GdkMonitor) monitor = g_list_model_get_item (pinpoint->monitors, i);
-
-      if (monitor != pinpoint->audience_monitor && monitor_is_builtin (monitor))
-        {
-          pinpoint->presenter_monitor = g_steal_pointer (&monitor);
-          return pinpoint->presenter_monitor;
-        }
-    }
-
-  if (monitor_at_window (pinpoint->window) != pinpoint->audience_monitor)
-    g_set_object (&pinpoint->presenter_monitor,
-                  monitor_at_window (pinpoint->window));
-  if (pinpoint->presenter_monitor == NULL && count > 0)
-    for (guint i = 0; i < count; i++)
-      {
-        GdkMonitor *monitor = g_list_model_get_item (pinpoint->monitors, i);
-
-        if (monitor != pinpoint->audience_monitor)
-          {
-            pinpoint->presenter_monitor = monitor;
-            break;
-          }
-        g_object_unref (monitor);
-      }
+  g_set_object (&pinpoint->presenter_monitor, (gpointer) selected);
+  free_monitor_candidates (candidates, count);
   return pinpoint->presenter_monitor;
 }
 
@@ -1459,30 +1473,20 @@ static GdkMonitor *
 get_audience_monitor (Pinpoint  *pinpoint,
                       GdkMonitor *presenter_monitor)
 {
-  guint count = g_list_model_get_n_items (pinpoint->monitors);
+  guint count;
+  PpDisplayCandidate *candidates = collect_monitor_candidates (pinpoint,
+                                                                &count);
+  gconstpointer selected = pp_display_selection_audience (
+    candidates,
+    count,
+    presenter_monitor,
+    pinpoint->audience_monitor);
+  GdkMonitor *result = selected != NULL
+    ? g_object_ref ((gpointer) selected)
+    : NULL;
 
-  if (pinpoint->audience_monitor != NULL &&
-      gdk_monitor_is_valid (pinpoint->audience_monitor) &&
-      pinpoint->audience_monitor != presenter_monitor)
-    return g_object_ref (pinpoint->audience_monitor);
-
-  for (guint i = 0; i < count; i++)
-    {
-      GdkMonitor *monitor = g_list_model_get_item (pinpoint->monitors, i);
-
-      if (monitor != presenter_monitor && !monitor_is_builtin (monitor))
-        return monitor;
-      g_object_unref (monitor);
-    }
-  for (guint i = 0; i < count; i++)
-    {
-      GdkMonitor *monitor = g_list_model_get_item (pinpoint->monitors, i);
-
-      if (monitor != presenter_monitor)
-        return monitor;
-      g_object_unref (monitor);
-    }
-  return NULL;
+  free_monitor_candidates (candidates, count);
+  return result;
 }
 
 static void
@@ -1591,24 +1595,27 @@ monitors_changed_cb (GListModel *model,
                      gpointer    user_data)
 {
   Pinpoint *pinpoint = user_data;
+  guint count;
+  PpDisplayCandidate *candidates;
+  gconstpointer presenter;
+  gconstpointer audience;
 
   (void) model;
   (void) position;
   (void) removed;
   (void) added;
-  if (g_list_model_get_n_items (pinpoint->monitors) < 2)
-    {
-      /* A two-display assignment is no longer meaningful. Recalculate it
-       * automatically if another display is connected later. */
-      g_clear_object (&pinpoint->presenter_monitor);
-      g_clear_object (&pinpoint->audience_monitor);
-    }
-  else if (pinpoint->presenter_monitor != NULL &&
-      !gdk_monitor_is_valid (pinpoint->presenter_monitor))
+  candidates = collect_monitor_candidates (pinpoint, &count);
+  presenter = pinpoint->presenter_monitor;
+  audience = pinpoint->audience_monitor;
+  pp_display_selection_validate (candidates,
+                                 count,
+                                 &presenter,
+                                 &audience);
+  if (presenter == NULL)
     g_clear_object (&pinpoint->presenter_monitor);
-  if (pinpoint->audience_monitor != NULL &&
-      !gdk_monitor_is_valid (pinpoint->audience_monitor))
+  if (audience == NULL)
     g_clear_object (&pinpoint->audience_monitor);
+  free_monitor_candidates (candidates, count);
   update_monitor_choices (pinpoint);
   if (pinpoint->fullscreen)
     set_fullscreen (pinpoint, TRUE);

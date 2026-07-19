@@ -42,17 +42,42 @@
   rasterisation, and page curl captures at physical HiDPI resolution. The
   documented one-time page-curl readback/upload remains a hardware-profiling
   question; X11 remains only a compatibility fallback.
+- [x] Validate historical presentations against the installed 0.1.8 Flatpak.
+  Real presentations have been exercised during the port, and every known
+  discrepancy that can be shared repeatably is represented by the compatibility,
+  rendering, media, transition, lifecycle, or multi-monitor fixtures. Treat new
+  real-presentation findings as regressions and add a focused fixture when they
+  appear rather than maintaining a duplicate private corpus in the repository.
+- [x] Audit keyboard and assistive-technology behaviour. The native setup view
+  retains GTK/libadwaita semantics; the custom stage now exposes slide position,
+  audience text, blank state, and shortcut help; speaker previews and timing
+  controls have contextual names; and disabling desktop animations eliminates
+  slide motion. The historical format's lack of backward-compatible visual
+  alternative text remains explicitly documented as an authoring limitation.
+- [x] State the project's goal in the About dialog: help hackers give excellent
+  presentations with concise plain-text files.
 - [ ] Resume hardware performance validation after the pending local update
   unblocks profiling. Capture page-curl frame pacing on representative
   integrated and discrete GPUs and run a long presentation on battery power;
   investigate persistent mapped GL buffers only if those traces show that the
   remaining curved-page buffer update is material.
 - [ ] Enable host-session GNOME automation for repeatable interactive UI tests
-  where practical. Keep Pinpoint's Flatpak permissions unchanged: use `gdbus`
-  from the outer test environment for ordinary session-bus inspection, and run
-  window and input automation in an explicitly enabled host GNOME Shell context
-  when tests need to exercise fullscreen, speaker-window, navigation, or
-  display-hotplug behaviour.
+  where practical. Deterministic selection tests now cover one, two, and three
+  displays plus unplug/replug recalculation, and `tests/run-host-display-test.sh`
+  covers real GNOME fullscreen placement, display swapping, and fullscreen
+  restoration without changing Flatpak permissions. Run and ratchet the host
+  gate with two connected displays in extended-desktop mode after GNOME Shell
+  unsafe mode is re-enabled. This live two-screen run is the remaining
+  validation requirement; physical connector events remain represented by the
+  tested production selection policy rather than a synthetic compositor device.
+- [ ] Expose presentation controls through MPRIS only while presentation view
+  is active, with clear slide-oriented semantics for previous, next, and
+  play/pause. Verify that presentation mode always inhibits screen blanking and
+  locking, and that the inhibit is released promptly when presenting ends. Keep
+  standard HID clickers working through the existing arrow/Page Up/Page Down
+  controls; consider exported session D-Bus actions for trusted local tools and
+  phone/desktop MPRIS clients before adding any network-facing remote-control
+  service or permission.
 - [ ] Explore an optional GTK-native composition environment for authoring
   presentations. Keep `.pin` as the portable plain-text source format and
   external editors fully supported, while considering a separate experience

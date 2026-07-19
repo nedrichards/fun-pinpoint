@@ -35,7 +35,10 @@
   },
   "limits": {
     "src/main.c": {
-      "uncovered_lines": 614
+      "uncovered_lines": 625
+    },
+    "src/pp-display-selection.c": {
+      "uncovered_lines": 0
     },
     "src/pp-file-access.c": {
       "uncovered_branches": 11,
@@ -73,10 +76,10 @@
       "uncovered_lines": 0
     },
     "src/pp-speaker.c": {
-      "uncovered_lines": 89
+      "uncovered_lines": 93
     },
     "src/pp-stage.c": {
-      "uncovered_lines": 294
+      "uncovered_lines": 288
     },
     "src/pp-transition.c": {
       "uncovered_branches": 27,

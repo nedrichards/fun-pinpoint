@@ -44,7 +44,9 @@ for the budgets and a display-enabled command, and see the
 [Wayland-first rendering pipeline](docs/rendering-pipeline.md) for video,
 camera, image, SVG, text, colour, and hardware-acceleration details. The
 [media-format policy](docs/media-formats.md) defines the portable video and
-audio combinations covered by the production Flatpak and its fixtures.
+audio combinations covered by the production Flatpak and its fixtures. See
+[accessibility](docs/accessibility.md) for stage and speaker-view semantics,
+keyboard and reduced-motion behaviour, and the remaining authoring limitation.
 
 ### Sanitizers and leak detection
 
@@ -159,6 +161,7 @@ copy with all of its assets.
 - Left, Up, Backspace, Page Up, or secondary click: previous slide
 - F or F11: fullscreen
 - F1: speaker view
+- S in the speaker view: swap the audience and speaker displays
 - B: blank the audience screen
 - H or Home: first slide
 - Enter: run the slide command inside the sandbox
@@ -169,7 +172,8 @@ The speaker window also provides start/restart, pause, autoadvance, fullscreen,
 display swapping, and rehearsal controls. **Swap Displays** exchanges the
 audience and speaker displays while presenting fullscreen on two or more
 screens. Additional displays are left untouched. Rehearsal timings are written
-back only after advancing past the final slide.
+back only after advancing past the final slide. The real GNOME two-screen path
+has a separate [host display automation runner](docs/host-display-automation.md).
 
 ## License
 

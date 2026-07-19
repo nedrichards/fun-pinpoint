@@ -42,6 +42,7 @@ export GST_REGISTRY="$registry_file"
 export G_DEBUG=${G_DEBUG:-fatal-criticals}
 
 "$build_dir/tests/test-parser" "$root/tests/fixtures/compatibility.pin"
+"$build_dir/tests/test-display-selection"
 "$build_dir/tests/test-performance"
 "$build_dir/tests/test-pixels" \
   "$root/tests/fixtures/pixel-reference.pin" \

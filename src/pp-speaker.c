@@ -566,6 +566,12 @@ key_pressed_cb (GtkEventControllerKey *controller,
       fullscreen_cb (NULL, self);
       return GDK_EVENT_STOP;
 
+    case GDK_KEY_s:
+    case GDK_KEY_S:
+      if (gtk_widget_is_sensitive (GTK_WIDGET (self->swap_displays_button)))
+        swap_displays_cb (NULL, self);
+      return GDK_EVENT_STOP;
+
     case GDK_KEY_F1:
       gtk_widget_set_visible (GTK_WIDGET (self->window), FALSE);
       return GDK_EVENT_STOP;
@@ -643,11 +649,13 @@ install_speaker_css (GdkDisplay *display)
 }
 
 static GtkWidget *
-make_preview (PpStage **out_preview)
+make_preview (PpStage    **out_preview,
+              const char  *accessible_context)
 {
   GtkWidget *preview = pp_stage_new ();
 
   pp_stage_set_media_enabled (PP_STAGE (preview), FALSE);
+  pp_stage_set_accessible_context (PP_STAGE (preview), accessible_context);
   *out_preview = PP_STAGE (preview);
   return preview;
 }
@@ -692,9 +700,9 @@ pp_speaker_new (GtkApplication *application,
 
   root = gtk_overlay_new ();
   gtk_window_set_child (self->window, root);
-  previous = make_preview (&self->previous_preview);
-  current = make_preview (&self->current_preview);
-  next = make_preview (&self->next_preview);
+  previous = make_preview (&self->previous_preview, "Previous slide");
+  current = make_preview (&self->current_preview, "Current slide");
+  next = make_preview (&self->next_preview, "Next slide");
 
   self->notes = GTK_LABEL (gtk_label_new (NULL));
   gtk_label_set_wrap (self->notes, TRUE);
@@ -705,6 +713,10 @@ pp_speaker_new (GtkApplication *application,
   gtk_widget_set_vexpand (GTK_WIDGET (self->notes), TRUE);
   gtk_widget_add_css_class (GTK_WIDGET (self->notes),
                             "pinpoint-speaker-notes-label");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (self->notes),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Speaker notes",
+                                  -1);
   notes_scroll = gtk_scrolled_window_new ();
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (notes_scroll),
                                   GTK_POLICY_NEVER,
@@ -724,7 +736,7 @@ pp_speaker_new (GtkApplication *application,
   gtk_widget_add_css_class (toolbar, "pinpoint-speaker-toolbar");
   gtk_overlay_add_overlay (GTK_OVERLAY (root), toolbar);
 
-  button = gtk_button_new_with_label ("Speaker");
+  button = gtk_button_new_with_label ("Hide Speaker View");
   g_signal_connect (button, "clicked", G_CALLBACK (hide_cb), self);
   gtk_box_append (GTK_BOX (toolbar), button);
   self->start_button = GTK_BUTTON (gtk_button_new_with_label ("Start"));
@@ -747,6 +759,10 @@ pp_speaker_new (GtkApplication *application,
     gtk_button_new_with_label ("Swap Displays"));
   gtk_widget_set_tooltip_text (GTK_WIDGET (self->swap_displays_button),
                                "Swap the audience and speaker displays");
+  gtk_accessible_update_property (
+    GTK_ACCESSIBLE (self->swap_displays_button),
+    GTK_ACCESSIBLE_PROPERTY_KEY_SHORTCUTS, "S",
+    -1);
   gtk_widget_set_sensitive (GTK_WIDGET (self->swap_displays_button), FALSE);
   g_signal_connect (self->swap_displays_button,
                     "clicked",
@@ -754,6 +770,10 @@ pp_speaker_new (GtkApplication *application,
                     self);
   gtk_box_append (GTK_BOX (toolbar), GTK_WIDGET (self->swap_displays_button));
   button = gtk_button_new_with_label ("Fullscreen");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (button),
+                                  GTK_ACCESSIBLE_PROPERTY_KEY_SHORTCUTS,
+                                  "F11",
+                                  -1);
   g_signal_connect (button, "clicked", G_CALLBACK (fullscreen_cb), self);
   gtk_box_append (GTK_BOX (toolbar), button);
 
@@ -762,6 +782,12 @@ pp_speaker_new (GtkApplication *application,
   gtk_widget_set_valign (progress, GTK_ALIGN_END);
   gtk_widget_set_size_request (progress, -1, 32);
   self->progress = GTK_DRAWING_AREA (gtk_drawing_area_new ());
+  gtk_accessible_update_property (
+    GTK_ACCESSIBLE (self->progress),
+    GTK_ACCESSIBLE_PROPERTY_LABEL, "Presentation timing progress",
+    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+    "Visual comparison of elapsed time and the current slide plan",
+    -1);
   gtk_drawing_area_set_draw_func (self->progress,
                                   progress_draw_cb,
                                   self,
@@ -774,6 +800,10 @@ pp_speaker_new (GtkApplication *application,
   gtk_widget_set_margin_bottom (GTK_WIDGET (self->remaining), 4);
   gtk_widget_add_css_class (GTK_WIDGET (self->remaining),
                             "pinpoint-speaker-remaining");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (self->remaining),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Remaining presentation time",
+                                  -1);
   gtk_overlay_add_overlay (GTK_OVERLAY (progress), GTK_WIDGET (self->remaining));
   gtk_overlay_add_overlay (GTK_OVERLAY (root), progress);
 

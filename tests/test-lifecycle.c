@@ -298,6 +298,105 @@ find_speaker_window (GtkApplication *application)
 }
 
 static void
+test_stage_accessibility (void)
+{
+  GtkWidget *stage = pp_stage_new ();
+  g_autoptr (PpPresentation) invalid_markup = NULL;
+  g_autoptr (PpPresentation) empty_slide = NULL;
+  g_autoptr (GError) error = NULL;
+
+  g_object_ref_sink (stage);
+
+  gtk_test_accessible_assert_role (GTK_ACCESSIBLE (stage),
+                                   GTK_ACCESSIBLE_ROLE_GROUP);
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                       "Presentation slide");
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                       "No presentation loaded");
+
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             load_fixture (multi_monitor_fixture_path),
+                             0);
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                       "Presentation slide 1 of 3");
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                       "AUDIENCE SLIDE 1");
+
+  g_assert_true (pp_stage_next (PP_STAGE (stage)));
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                       "Presentation slide 2 of 3");
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                       "AUDIENCE SLIDE 2");
+
+  pp_stage_set_blank (PP_STAGE (stage), TRUE);
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                       "Blank screen");
+  pp_stage_set_accessible_context (PP_STAGE (stage), "Current slide");
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                       "Current slide 2 of 3");
+  pp_stage_set_blank (PP_STAGE (stage), FALSE);
+
+  invalid_markup = pp_presentation_parse ("--\n<b>broken\n",
+                                          NULL,
+                                          FALSE,
+                                          &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (invalid_markup);
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             g_steal_pointer (&invalid_markup),
+                             0);
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                       "<b>broken");
+
+  empty_slide = pp_presentation_parse ("--\n", NULL, FALSE, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (empty_slide);
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             g_steal_pointer (&empty_slide),
+                             0);
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                       "Slide has no audience text");
+
+  g_object_unref (stage);
+}
+
+static void
+test_reduced_motion_disables_transitions (void)
+{
+  GtkSettings *settings = gtk_settings_get_default ();
+  GtkWidget *stage = pp_stage_new ();
+  gboolean animations_enabled;
+
+  g_object_ref_sink (stage);
+  g_assert_nonnull (settings);
+  g_object_get (settings,
+                "gtk-enable-animations",
+                &animations_enabled,
+                NULL);
+  g_object_set (settings, "gtk-enable-animations", FALSE, NULL);
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             load_fixture (native_transition_fixture_path),
+                             0);
+  g_assert_true (pp_stage_next (PP_STAGE (stage)));
+  g_assert_false (pp_stage_is_transitioning (PP_STAGE (stage)));
+  g_object_set (settings,
+                "gtk-enable-animations",
+                animations_enabled,
+                NULL);
+  g_object_unref (stage);
+}
+
+static void
 test_speaker_keeps_stage_alive (void)
 {
   g_autoptr (GtkApplication) application = create_application (
@@ -725,6 +824,8 @@ main (int   argc,
     return 77;
 
   test_wayland_media_sink_caps ();
+  test_stage_accessibility ();
+  test_reduced_motion_disables_transitions ();
   test_speaker_keeps_stage_alive ();
   test_speaker_control_and_repeated_lifecycle ();
   test_replace_presentation_during_transition ();

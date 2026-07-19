@@ -4,6 +4,14 @@ parser_test = executable(
   dependencies: [pinpoint_core_dep],
 )
 
+display_selection_test = executable(
+  'test-display-selection',
+  'test-display-selection.c',
+  dependencies: [pinpoint_core_dep],
+)
+
+test('display-selection', display_selection_test)
+
 test(
   'parser',
   parser_test,

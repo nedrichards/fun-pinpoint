@@ -25,6 +25,8 @@ gboolean   pp_stage_get_blank (PpStage *self);
 gboolean   pp_stage_is_transitioning (PpStage *self);
 void       pp_stage_set_media_enabled (PpStage  *self,
                                        gboolean  enabled);
+void       pp_stage_set_accessible_context (PpStage    *self,
+                                            const char *context);
 void       pp_stage_set_audio_enabled (PpStage  *self,
                                        gboolean  enabled);
 void       pp_stage_set_camera_device (PpStage    *self,
