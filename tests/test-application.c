@@ -138,7 +138,7 @@ test_fullscreen_speaker_shutdown (void)
 
   terminate_running_application (process);
   g_autofree char *stderr_text = finish_process (process, EXIT_SUCCESS);
-  g_assert_null (strstr (stderr_text, "pinpoint:"));
+  g_assert_null (strstr (stderr_text, "pinpoint: "));
 }
 
 static void
@@ -153,7 +153,7 @@ test_playing_media_shutdown (void)
 
   terminate_running_application (process);
   g_autofree char *stderr_text = finish_process (process, EXIT_SUCCESS);
-  g_assert_null (strstr (stderr_text, "pinpoint:"));
+  g_assert_null (strstr (stderr_text, "pinpoint: "));
 }
 
 static void

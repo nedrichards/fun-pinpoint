@@ -10,6 +10,8 @@ typedef struct _PpSpeaker PpSpeaker;
 typedef void (*PpSpeakerFullscreenRequestFunc) (PpSpeaker *speaker,
                                                 gboolean   fullscreen,
                                                 gpointer   user_data);
+typedef void (*PpSpeakerSwapDisplaysRequestFunc) (PpSpeaker *speaker,
+                                                  gpointer   user_data);
 
 PpSpeaker *pp_speaker_new (GtkApplication *application,
                            PpStage         *audience_stage);
@@ -24,6 +26,12 @@ void       pp_speaker_set_fullscreen_request_func (
              PpSpeaker                       *self,
              PpSpeakerFullscreenRequestFunc   callback,
              gpointer                         user_data);
+void       pp_speaker_set_swap_displays_request_func (
+             PpSpeaker                         *self,
+             PpSpeakerSwapDisplaysRequestFunc   callback,
+             gpointer                           user_data);
+void       pp_speaker_set_swap_displays_available (PpSpeaker *self,
+                                                   gboolean   available);
 void       pp_speaker_start_rehearsal (PpSpeaker *self);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (PpSpeaker, pp_speaker_free)

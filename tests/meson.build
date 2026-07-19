@@ -49,6 +49,7 @@ test(
     'fixtures/multi-monitor.pin',
     'fixtures/camera.pin',
   ),
+  is_parallel: false,
   timeout: 30,
 )
 

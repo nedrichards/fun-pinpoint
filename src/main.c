@@ -1495,6 +1495,10 @@ set_fullscreen (Pinpoint *pinpoint,
   fullscreen = !!fullscreen;
   speaker_visible = pp_speaker_is_visible (pinpoint->speaker);
   monitor_count = g_list_model_get_n_items (pinpoint->monitors);
+  pp_speaker_set_swap_displays_available (pinpoint->speaker,
+                                          fullscreen &&
+                                          speaker_visible &&
+                                          monitor_count > 1);
 
   pinpoint->fullscreen = fullscreen;
   if (fullscreen)
@@ -1555,6 +1559,31 @@ speaker_fullscreen_requested_cb (PpSpeaker *speaker,
 }
 
 static void
+speaker_swap_displays_requested_cb (PpSpeaker *speaker,
+                                    gpointer   user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  GdkMonitor *presenter_monitor;
+  g_autoptr (GdkMonitor) audience_monitor = NULL;
+
+  (void) speaker;
+  if (!pinpoint->fullscreen ||
+      !pp_speaker_is_visible (pinpoint->speaker) ||
+      g_list_model_get_n_items (pinpoint->monitors) < 2)
+    return;
+
+  presenter_monitor = get_presenter_monitor (pinpoint);
+  audience_monitor = get_audience_monitor (pinpoint, presenter_monitor);
+  if (presenter_monitor == NULL || audience_monitor == NULL)
+    return;
+
+  g_set_object (&pinpoint->audience_monitor, presenter_monitor);
+  g_set_object (&pinpoint->presenter_monitor, audience_monitor);
+  update_monitor_choices (pinpoint);
+  set_fullscreen (pinpoint, TRUE);
+}
+
+static void
 monitors_changed_cb (GListModel *model,
                      guint       position,
                      guint       removed,
@@ -1567,7 +1596,14 @@ monitors_changed_cb (GListModel *model,
   (void) position;
   (void) removed;
   (void) added;
-  if (pinpoint->presenter_monitor != NULL &&
+  if (g_list_model_get_n_items (pinpoint->monitors) < 2)
+    {
+      /* A two-display assignment is no longer meaningful. Recalculate it
+       * automatically if another display is connected later. */
+      g_clear_object (&pinpoint->presenter_monitor);
+      g_clear_object (&pinpoint->audience_monitor);
+    }
+  else if (pinpoint->presenter_monitor != NULL &&
       !gdk_monitor_is_valid (pinpoint->presenter_monitor))
     g_clear_object (&pinpoint->presenter_monitor);
   if (pinpoint->audience_monitor != NULL &&
@@ -1804,6 +1840,10 @@ activate_cb (GtkApplication *application,
   pp_speaker_set_fullscreen_request_func (pinpoint->speaker,
                                           speaker_fullscreen_requested_cb,
                                           pinpoint);
+  pp_speaker_set_swap_displays_request_func (
+    pinpoint->speaker,
+    speaker_swap_displays_requested_cb,
+    pinpoint);
   pinpoint->monitors = g_object_ref (
     gdk_display_get_monitors (gtk_widget_get_display (
       GTK_WIDGET (pinpoint->window))));

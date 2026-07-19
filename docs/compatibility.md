@@ -41,7 +41,8 @@ fixes.
   explicitly coordinated
 - Coordinated audience and speaker windows: synchronized fullscreen controls,
   presenter/audience monitor selection, single-monitor fallback, and display
-  hotplug handling
+  hotplug handling, plus a speaker-toolbar action that swaps the active pair
+  while leaving any additional displays untouched
 - Rehearsal timing accumulation and atomic serialization back to the source
 - PDF output with A4 and US Letter paper sizes, landscape and portrait
   orientation, optional separate speaker-note pages, wrapped note text, and
@@ -68,8 +69,31 @@ fixes.
 
 ## Remaining parity work
 
-No known automated 0.1.8 parser or renderer parity gaps remain. The manual
-hardware checks below are deliberately retained as release gates.
+No known automated 0.1.8 parser or renderer parity gaps remain. The initial
+real-hardware multi-display release gate is complete; repeat it when the GTK,
+GNOME, or display-assignment code changes materially.
+
+## Manual hardware validation
+
+Two-display Wayland validation passed on 19 July 2026 with a 2256×1504
+built-in panel and a 3840×2560 external panel, both using fractional scaling:
+
+- `--speakermode --fullscreen` automatically placed the audience on the
+  external display and the speaker view on the built-in display.
+- Navigation from the focused speaker window updated the audience and all
+  three speaker previews together.
+- F and F11 synchronized fullscreen from both the audience and speaker
+  windows; F1 hid the speaker window and restored it on the presenter display.
+- Explicitly selecting the built-in display for the audience reversed the
+  assignment correctly, with the speaker view fullscreen on the external
+  display.
+- **Swap Displays** in the speaker toolbar exchanged the fullscreen audience
+  and speaker displays in both directions without restarting the presentation.
+- Disconnecting the external display while fullscreen kept both windows
+  alive, moved the audience fullscreen onto the built-in display, and made the
+  speaker view windowed. The one-screen fallback cleared the obsolete
+  two-display assignment so reconnecting restored the automatic external
+  audience and built-in speaker layout without restarting the presentation.
 
 ## Follow-up quality work
 
@@ -77,11 +101,6 @@ hardware checks below are deliberately retained as release gates.
   and flat-page submission are now optimized and budgeted automatically;
   investigate persistent mapped GL buffers only if hardware traces show that
   the remaining curved-page update is significant.
-- Before the initial release, manually validate the audience/speaker layout on
-  a real two-display Wayland session: `--speakermode --fullscreen` startup,
-  F1 show/hide, F/F11 from both windows, navigation while the speaker window is
-  focused, built-in/external assignment, and connect/disconnect while
-  fullscreen.
 
 ## Deliberately retained historical behavior
 

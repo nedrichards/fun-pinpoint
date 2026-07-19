@@ -164,8 +164,10 @@ copy with all of its assets.
 - Escape or Q: quit
 
 The speaker window also provides start/restart, pause, autoadvance, fullscreen,
-and rehearsal controls. Rehearsal timings are written back only after advancing
-past the final slide.
+display swapping, and rehearsal controls. **Swap Displays** exchanges the
+audience and speaker displays while presenting fullscreen on two or more
+screens. Additional displays are left untouched. Rehearsal timings are written
+back only after advancing past the final slide.
 
 ## License
 
