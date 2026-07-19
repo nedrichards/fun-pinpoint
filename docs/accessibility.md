@@ -32,9 +32,9 @@ format has no backward-compatible field for alternative descriptions of image,
 video, SVG, or camera backgrounds. Unknown bracketed settings deliberately mean
 “background”, so introducing an `[alt=…]` setting would make the same file render
 incorrectly in historical Pinpoint. Authors should therefore avoid relying on
-an uncaptioned visual as the only source of essential information. A future
-format extension must preserve the historical parser rule before Pinpoint can
-offer per-slide visual descriptions.
+an uncaptioned visual as the only source of essential information. The central
+[Pinpoint backlog](../TODO.md) owns the work to design visual descriptions
+without violating that historical parser rule.
 
 Colour contrast inside a slide is likewise selected by the presentation
 author. Pinpoint retains the historical shading controls and defaults to a

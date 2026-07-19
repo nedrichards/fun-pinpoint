@@ -12,6 +12,9 @@ hardware.
   catching accidental extra deformation, sorting, or allocation work.
 - Completed transitions must remove their GTK frame-clock callback. A static
   slide therefore has no transition-driven redraw loop.
+- An idle or paused speaker view must own no 50 ms timing source. Raster cache
+  tests exercise sharing across audience/preview stages and redraw after
+  targeted invalidation; an atomic file-replacement test covers live monitors.
 - The SDK-built executable, including embedded presentation assets, must remain
   at or below 3 MiB. The bundled VP9/Opus introduction video has a separate
   1.4 MiB budget.
@@ -49,6 +52,12 @@ See [the Wayland-first rendering pipeline](rendering-pipeline.md) for media
 caps diagnostics, text and image quality choices, and the remaining page-curl
 readback boundary.
 
+The [whole-codebase performance audit](performance-audit.md) maps every known
+copy boundary. Its first production batch removes speaker idle work, shares and
+watches bounded raster assets, moves interactive PDF export off the GTK thread,
+and scores thumbnail candidates without copying them. Remaining memory bounds,
+prefetch, and GTK graphics offload work stay evidence-gated in the backlog.
+
 ## Page-curl work avoided
 
 The renderer deforms each of the 1,089 mesh vertices once and reuses its depth
@@ -56,10 +65,12 @@ when ordering triangles. Rotation sine and cosine are calculated once per
 page, not once per vertex. A flat page uses a static GPU vertex/index mesh, so
 it performs no per-frame deformation, sorting, or buffer upload.
 
-## Hardware release checks
+## Hardware validation procedure
 
-Before a release, profile page-curl frame pacing on representative integrated
-and discrete GPUs and run a long presentation on battery power. Persistent
-mapped GL buffers should only be added if those traces show that the remaining
-single curved-page buffer update is material. Multi-display audience/speaker
-behaviour also remains a physical-hardware release check.
+The central [Pinpoint backlog](../TODO.md) owns the status and scheduling of the
+outstanding hardware run. When performing it, profile page-curl frame pacing on
+representative integrated and discrete GPUs and run a long presentation on
+battery power. Persistent mapped GL buffers should only be added if those
+traces show that the remaining single curved-page buffer update is material.
+Multi-display audience/speaker behaviour remains a physical-hardware release
+check after material GTK, GNOME, or display-assignment changes.

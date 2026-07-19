@@ -17,8 +17,8 @@ and rehearsal views, embedded sandbox commands, PDF video thumbnails, legacy
 ClutterState transition JSON, and PDF export are working.
 See [the presentation format reference](docs/presentation-format.md) for the
 complete `.pin` syntax, [the compatibility ledger](docs/compatibility.md) for
-remaining parity work, and [the product backlog](TODO.md) for planned
-user-facing improvements.
+retained behaviour and validation history, and [the product backlog](TODO.md)
+for all open work.
 
 ## Build
 
@@ -50,7 +50,8 @@ camera, image, SVG, text, colour, and hardware-acceleration details. The
 [media-format policy](docs/media-formats.md) defines the portable video and
 audio combinations covered by the production Flatpak and its fixtures. See
 [accessibility](docs/accessibility.md) for stage and speaker-view semantics,
-keyboard and reduced-motion behaviour, and the remaining authoring limitation.
+keyboard and reduced-motion behaviour, and the visual-description format
+limitation tracked in the central backlog.
 The [remote-control architecture](docs/remote-control.md) documents the shared
 presentation actions, idle-inhibit contract, and transport evaluation plan.
 

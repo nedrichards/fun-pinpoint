@@ -1,11 +1,85 @@
 # Pinpoint backlog
 
+This is the single status and sequencing list for Pinpoint. Supporting documents
+may explain constraints, validation procedures, or design results, but open work
+belongs here.
+
+## Open work
+
+- [ ] Improve the external-editor experience without making an editor part of
+  the presentation runtime. Start with an installed GtkSourceView 5 language
+  definition for `.pin`: highlight defaults and slide separators, settings,
+  audience text, comments/speaker notes, commands, and Pango markup; associate
+  it with Pinpoint's MIME type; validate the definition automatically and in
+  GNOME Text Editor. This is the next implementation task.
+- [ ] Replace the inherited Pinpoint 0.1.8 AppStream screenshot before a
+  supported release. Capture the current GTK 4 launch, audience, and speaker
+  experiences at representative sizes, keep the images in a stable public
+  location, and make the captions express the plain-text hacker workflow.
+- [ ] Design a backward-compatible way to describe visual backgrounds to
+  assistive technology. The historical parser treats every unknown bracketed
+  setting as a background, so a new `[alt=…]` field would break the same file in
+  Pinpoint 0.1.8. Evaluate a comment convention, sidecar metadata, or a versioned
+  format extension; then expose the chosen description on the stage and add
+  compatibility and accessibility fixtures.
+- [ ] Complete local desktop remote-control evaluation. Exercise the MPRIS
+  prototype through a real general-purpose client, test per-instance D-Bus
+  actions inside the production Flatpak, and verify discoverability and
+  selection with two simultaneous Pinpoint processes. Keep MPRIS play/pause
+  unavailable unless it truthfully controls a presentation timer.
+- [ ] Evaluate phone remote control once a real paired-device setup is
+  available. Test Valent or GSConnect plus a phone before selecting an adapter.
+  If those paths cannot provide a reliable presentation remote, prove the
+  bespoke peer design's ephemeral QR/phrase pairing, encrypted transport,
+  explicit lifecycle, revocation, and Flatpak permissions before granting
+  network access. `varlink-glib` also needs a dependency recheck because the
+  GNOME 50 SDK currently has libdex 1.1 while the alpha requires 1.2.
+- [ ] Validate the host display automation runner with two displays in extended
+  desktop mode and GNOME Shell unsafe mode explicitly enabled. Manual two-screen
+  startup, navigation, swapping, unplug, and replug behaviour passed on 19 July
+  2026; this remaining gate is for `tests/run-host-display-test.sh` itself.
+  Physical connector events remain covered by the deterministic production
+  selection policy because a window-automation process cannot synthesize them
+  reliably.
+- [ ] Finish the presentation asset-store work. Load and prefetch large raster
+  textures off the main thread with cancellation on reload/shutdown; share a
+  parsed immutable SVG source where preview sizes differ; and replace the
+  eight-texture working-set bound with a byte-aware bound if representative
+  decks show materially different memory use.
+- [ ] Finish PDF export memory bounds and cancellation. The interactive path is
+  now asynchronous and thumbnail candidates are scored in mapped GStreamer
+  buffers, but the UI should expose cancellation, negotiate or scale the winner
+  to an explicit export-quality bound, and release or bound decoded image
+  surfaces instead of retaining the entire deck.
+- [ ] Prototype modern GTK display fast paths without weakening compatibility.
+  Test `GtkGraphicsOffload` around a dedicated static video/camera paintable and
+  prove when DMA-BUF frames can bypass GSK on Wayland while text, shading, and
+  transitions remain correct. Compare GTK 4.22's `GtkSvg` paintable with
+  librsvg on the SVG compatibility and pixel suites, retaining librsvg fallback
+  for unsupported SVG. Also honour `gtk-interface-reduced-motion` when
+  suppressing slide motion.
+- [ ] Resume hardware performance validation after the pending local update
+  unblocks Sysprof. Capture page-curl frame pacing, its one-time GSK-to-CPU-to-GL
+  transfer, peak texture residency, and colour consistency on representative
+  integrated and discrete GPUs; record negotiated video paths and offload
+  decisions on Wayland; check an external display; and run a long presentation
+  on battery. Test releasing uploaded page-curl source textures or persistent
+  mapped buffers only if those traces show material cost.
+- [ ] Explore an optional GTK-native composition environment after the external
+  editor integration is established. Keep `.pin` as the portable plain-text
+  source format and external editors fully supported, while considering a
+  separate GtkSourceView-based experience inspired by GNOME Text Editor and
+  Builder: diagnostics, completion for settings and assets, slide navigation,
+  and a live quality-accurate preview. Keep its dependencies and runtime cost
+  out of the lean presentation path when the editor is not installed or used.
+
+## Completed work
+
 - [x] Prepare a safe first public checkpoint. Exclude local build products,
   profiling captures, Python bytecode, crash dumps, and agent metadata; audit
   authored files for credentials and machine-specific paths; include the full
   LGPL-2.1-or-later licence; and keep the active-reconstruction status and
   remaining manual hardware gates explicit.
-
 - [x] Expose more PDF export options in the launch-screen workflow. The focused
   libadwaita setup step now covers paper size, orientation, speaker-note pages,
   and comment notes, with equivalent CLI controls and legacy-compatible
@@ -22,85 +96,61 @@
   frame. PDF export samples at most four candidates under fixed decode
   timeouts, rejects black or nearly uniform frames, scores contrast and visual
   detail, retains a safe fallback, and caches one result per video URI.
-- [x] Review and define the acceptable video-format set. Test the containers,
-  video codecs, audio codecs, colour formats, and common profile variants that
-  the GNOME runtime can reliably decode; distinguish formats Pinpoint supports
-  deliberately from those that merely happen to work through locally installed
-  GStreamer plugins. The production-runtime contract now covers WebM
-  VP8/VP9/AV1 Main, MP4 AV1 Main, MP4/MOV H.264 Constrained
+- [x] Review and define the acceptable video-format set. The production-runtime
+  contract covers WebM VP8/VP9/AV1 Main, MP4 AV1 Main, MP4/MOV H.264 Constrained
   Baseline/Main/High, Ogg Theora, animated GIF, Opus/Vorbis/AAC-LC, and
   conventional 8-bit 4:2:0 BT.601/BT.709 SDR. Synthetic accepted fixtures and
-  a corrupt MP4 rejection fixture are retained and tested independently of
-  host plugins. H.264 is supplied by the runtime-declared, automatically
-  installed codec extension; AV1 software fallback is verified against the
-  base runtime's dav1d decoder.
+  a corrupt MP4 rejection fixture are retained and tested independently of host
+  plugins. H.264 comes from the automatically installed codec extension; AV1
+  software fallback is verified against the base runtime's dav1d decoder.
 - [x] Audit the media and rendering pipeline for Wayland-first hardware
-  acceleration and output quality. Video now exposes its negotiated caps and
-  selected elements, the camera can negotiate PipeWire directly with the GTK
-  sink, raster images use explicit minification filtering, SVGs remain cached
-  vector nodes, text shaping is cached without application-side glyph
-  rasterisation, and page curl captures at physical HiDPI resolution. The
-  documented one-time page-curl readback/upload remains a hardware-profiling
-  question; X11 remains only a compatibility fallback.
+  acceleration and output quality. Video exposes negotiated caps and selected
+  elements, the camera can negotiate PipeWire directly with the GTK sink,
+  raster images use explicit minification filtering, SVGs remain cached vector
+  nodes, text shaping is cached without application-side glyph rasterisation,
+  and page curl captures at physical HiDPI resolution.
+- [x] Audit the whole codebase for obvious performance issues, redundant copies,
+  zero-copy gaps, and GNOME 50-era GTK/GLib/GStreamer improvements. The review
+  confirmed the zero-copy-eligible media path and identified speaker cache
+  resets and idle wakeups, repeated/unbounded asset work, synchronous and
+  copy-heavy PDF export, optional compositor video offload and GTK-native SVG
+  fast paths, and the page-curl readback boundary. Findings, constraints, and
+  implementation order are recorded in `docs/performance-audit.md`.
+- [x] Remove avoidable speaker-view work. Preview stages now retain their
+  presentation and shared raster cache while selecting adjacent slides without
+  transitions. The 50 ms timing source exists only while the timer is running
+  and is removed while idle or paused, with source-lifecycle regression tests.
+- [x] Establish watched, shared, bounded asset caching. Each unique background
+  is classified and resolved once per presentation, audience and preview stages
+  share an eight-texture LRU working set, unchanged textures survive text-only
+  reloads, and every referenced image, SVG, video, or legacy transition file is
+  monitored for targeted live invalidation. Atomic replacement, cross-stage
+  reuse, and redraw after invalidation are covered by tests.
+- [x] Remove the first interactive PDF stalls and redundant thumbnail copies.
+  Launch-screen export now runs through a tested `GTask` while CLI export stays
+  synchronous. Video candidates are scored directly in mapped RGBA buffers and
+  only the selected sample is copied into the PDF image path.
 - [x] Validate historical presentations against the installed 0.1.8 Flatpak.
   Real presentations have been exercised during the port, and every known
   discrepancy that can be shared repeatably is represented by the compatibility,
   rendering, media, transition, lifecycle, or multi-monitor fixtures. Treat new
-  real-presentation findings as regressions and add a focused fixture when they
-  appear rather than maintaining a duplicate private corpus in the repository.
-- [x] Audit keyboard and assistive-technology behaviour. The native setup view
-  retains GTK/libadwaita semantics; the custom stage now exposes slide position,
-  audience text, blank state, and shortcut help; speaker previews and timing
-  controls have contextual names; and disabling desktop animations eliminates
-  slide motion. The historical format's lack of backward-compatible visual
-  alternative text remains explicitly documented as an authoring limitation.
+  real-presentation findings as regressions and add a focused fixture.
+- [x] Audit keyboard and assistive-technology behaviour. Native setup retains
+  GTK/libadwaita semantics; the custom stage exposes slide position, audience
+  text, blank state, and shortcut help; speaker previews and timing controls
+  have contextual names; and disabling desktop animations eliminates motion.
 - [x] Put excellent presentations for hackers at the centre of the product.
-  One shared tagline now anchors the launch screen, About dialog, command-line
-  help, desktop entry, and AppStream listing. Supporting copy follows the
-  bundled introduction's actual philosophy: start with core ideas, use concise
-  plain text in the editor of your choice, tune it live, favour big imagery,
-  and keep the audience happier with less text.
-- [ ] Resume hardware performance validation after the pending local update
-  unblocks profiling. Capture page-curl frame pacing on representative
-  integrated and discrete GPUs and run a long presentation on battery power;
-  investigate persistent mapped GL buffers only if those traces show that the
-  remaining curved-page buffer update is material.
-- [ ] Enable host-session GNOME automation for repeatable interactive UI tests
-  where practical. Deterministic selection tests now cover one, two, and three
-  displays plus unplug/replug recalculation, and `tests/run-host-display-test.sh`
-  covers real GNOME fullscreen placement, display swapping, and fullscreen
-  restoration without changing Flatpak permissions. Run and ratchet the host
-  gate with two connected displays in extended-desktop mode after GNOME Shell
-  unsafe mode is re-enabled. This live two-screen run is the remaining
-  validation requirement; physical connector events remain represented by the
-  tested production selection policy rather than a synthetic compositor device.
-- [x] Establish the remote-control foundation independently of any transport.
-  Audience keys, speaker keys and toolbar controls, mouse buttons, standard HID
-  clickers, and delivered media-navigation keys now use one stateful action
-  model. Presentation display mode owns exactly one idle inhibitor whether
-  windowed or fullscreen; the live GNOME gate verifies flag `8`, stable
-  ownership, and release on exit.
+  One shared tagline anchors the launch screen, About dialog, command-line help,
+  desktop entry, and AppStream listing. Supporting copy follows the bundled
+  introduction's core-ideas, plain-text, live-tuning, and less-text philosophy.
+- [x] Establish the remote-control foundation independently of transport.
+  Audience and speaker input, toolbar controls, mouse buttons, standard HID
+  clickers, and delivered media-navigation keys use one stateful action model.
+  Presentation display mode owns exactly one idle inhibitor whether windowed or
+  fullscreen; the live GNOME gate verifies flag `8`, stable ownership, and
+  release on exit.
 - [x] Build isolated remote-control prototypes without selecting a production
-  adapter. Per-instance D-Bus actions and conservative MPRIS both drive the
-  shared state model and retain independent simultaneous processes. A bounded
-  Varlink interface parses and generates typed bindings; `librebonjour` builds
-  in the GNOME 50 SDK, while `varlink-glib` currently requires bundling libdex
-  1.2.beta beyond the SDK's 1.1.0. The P2P design keeps authenticated encrypted
-  pairing separate from DNS-SD discovery and proposes a companion process as a
-  way to keep network permissions out of the presenter.
-- [ ] Choose and productionise remote control only after real-client proof.
-  Test the D-Bus and MPRIS prototypes with GNOME accessibility/automation tools,
-  `playerctl`, and Valent or GSConnect plus a phone; repeat inside the production
-  Flatpak; then compare usefulness, discoverability, instance selection, and
-  required bus permissions. If a bespoke peer remains justified, prove its
-  ephemeral QR/phrase pairing, encrypted transport, explicit lifecycle and
-  revocation before granting network access. Keep MPRIS play/pause unavailable
-  unless it truthfully controls a presentation timer.
-- [ ] Explore an optional GTK-native composition environment for authoring
-  presentations. Keep `.pin` as the portable plain-text source format and
-  external editors fully supported, while considering a separate experience
-  based on GtkSourceView and inspired by GNOME Text Editor and Builder:
-  syntax-aware editing, diagnostics, completion for settings and assets, slide
-  navigation, and a live quality-accurate preview. Keep its dependencies and
-  runtime cost out of the lean presentation path when the editor is not
-  installed or used.
+  adapter. Per-instance D-Bus actions and conservative MPRIS drive the shared
+  state model and preserve independent processes. A bounded Varlink interface
+  generates typed bindings, `librebonjour` builds in GNOME 50, and the P2P
+  design separates authenticated encrypted pairing from DNS-SD discovery.

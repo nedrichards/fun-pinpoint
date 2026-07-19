@@ -41,6 +41,11 @@ kept VA-API decoding but negotiated system-memory NV12 through
 `GskGLRenderer`. These observations prove both paths on that machine; they are
 not hard-coded requirements for other drivers.
 
+The [whole-codebase performance audit](performance-audit.md) identifies a
+future `GtkGraphicsOffload` prototype for static video and camera slides. It
+must retain this negotiated sink path and normal GSK fallback; Pinpoint should
+not implement a second application-owned DMA-BUF importer.
+
 The portable input contract is intentionally narrower than all formats which
 GStreamer may decode. See [supported media formats](media-formats.md) for the
 tested containers, codecs, profiles, SDR colour layouts, and base-runtime
@@ -48,8 +53,10 @@ or runtime-declared codec-extension fallback requirement.
 
 ### Still images and SVG
 
-Raster images are loaded once as immutable `GdkTexture` objects and cached for
-the presentation. GDK retains their colour-state metadata. Rendering uses an
+Raster images are loaded as immutable `GdkTexture` objects into an eight-entry
+LRU shared by the audience and all speaker previews. The cache survives
+text-only presentation reloads, and a `GFileMonitor` invalidates an image when
+its source file changes. GDK retains colour-state metadata. Rendering uses an
 explicit linear filter when enlarging and a trilinear filter when reducing an
 image, avoiding the aliasing produced by single-level minification.
 
@@ -58,6 +65,8 @@ recordings for each slide and stage size. They are not decoded to a texture at
 the SVG's nominal width and then enlarged. The renderer can therefore rasterise
 the vector content for the actual output scale while repeated video-frame
 snapshots reuse the same node.
+An SVG source-file change invalidates those nodes immediately; sharing a parsed
+source across differently sized stages remains follow-up work.
 
 ### Text and ordinary transitions
 
@@ -112,7 +121,11 @@ Useful GTK diagnostics include `GSK_DEBUG=renderer,fallback,cache` and
 `GDK_DISABLE=dmabuf` for an intentional comparison run. Do not ship either as
 an application default.
 
-## Release checks
+## Hardware validation procedure
+
+The open hardware run is scheduled only in the central
+[Pinpoint backlog](../TODO.md). These are the reusable checks for that run, not
+a separate rendering backlog.
 
 On representative Wayland hardware:
 

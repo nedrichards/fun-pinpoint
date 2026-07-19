@@ -44,4 +44,6 @@ C bindings.
   the value.
 
 No GSConnect, Valent, or `playerctl` client was available during the spike.
-Those real-client checks remain necessary before choosing a production adapter.
+The central [Pinpoint backlog](../TODO.md) tracks those real-client checks and
+the production decision; this prototype note records results rather than
+maintaining another work list.

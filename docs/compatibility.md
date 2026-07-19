@@ -73,7 +73,7 @@ fixes.
 - Automated page-curl CPU, completed-transition idle, executable-size, bundled
   media-size, sanitizer, and media teardown regression gates
 
-## Remaining parity work
+## Parity status
 
 No known automated 0.1.8 parser or renderer parity gaps remain. The initial
 real-hardware multi-display release gate is complete; repeat it when the GTK,
@@ -101,12 +101,8 @@ built-in panel and a 3840×2560 external panel, both using fractional scaling:
   two-display assignment so reconnecting restored the automatic external
   audience and built-in speaker layout without restarting the presentation.
 
-## Follow-up quality work
-
-- Profile page-curl frame pacing on integrated and discrete GPUs. CPU mesh work
-  and flat-page submission are now optimized and budgeted automatically;
-  investigate persistent mapped GL buffers only if hardware traces show that
-  the remaining curved-page update is significant.
+Hardware profiling and every other open task are tracked in the central
+[Pinpoint backlog](../TODO.md), rather than as a second checklist here.
 
 ## Deliberately retained historical behavior
 

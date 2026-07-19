@@ -139,4 +139,5 @@ An adapter is suitable for production only if it:
 
 The prototypes satisfy the automated command, state, and multi-instance parts.
 They do not yet satisfy real-client, production-Flatpak, pairing, or permission
-proof, so no adapter has been selected for production.
+proof, so no adapter has been selected for production. The local-client and
+phone-client gates are sequenced in the central [Pinpoint backlog](../TODO.md).
