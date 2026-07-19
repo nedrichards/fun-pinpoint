@@ -54,8 +54,12 @@
   controls have contextual names; and disabling desktop animations eliminates
   slide motion. The historical format's lack of backward-compatible visual
   alternative text remains explicitly documented as an authoring limitation.
-- [x] State the project's goal in the About dialog: help hackers give excellent
-  presentations with concise plain-text files.
+- [x] Put excellent presentations for hackers at the centre of the product.
+  One shared tagline now anchors the launch screen, About dialog, command-line
+  help, desktop entry, and AppStream listing. Supporting copy follows the
+  bundled introduction's actual philosophy: start with core ideas, use concise
+  plain text in the editor of your choice, tune it live, favour big imagery,
+  and keep the audience happier with less text.
 - [ ] Resume hardware performance validation after the pending local update
   unblocks profiling. Capture page-curl frame pacing on representative
   integrated and discrete GPUs and run a long presentation on battery power;

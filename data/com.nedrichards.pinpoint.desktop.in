@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Pinpoint
-Comment=Create and deliver image-led presentations
+Comment=@TAGLINE@
 Exec=pinpoint %f
 Icon=@APPLICATION_ID@
 Terminal=false
@@ -9,4 +9,4 @@ Categories=Office;Presentation;
 MimeType=application/x-pinpoint;
 StartupNotify=true
 DBusActivatable=false
-Keywords=presentation;slides;talk;
+Keywords=presentation;slides;talk;hacker;plain-text;

@@ -1,9 +1,11 @@
 # Pinpoint presentation format
 
 Pinpoint presentations are UTF-8 plain-text files, conventionally saved with
-the `.pin` extension. A presentation contains optional global defaults followed
-by one or more slides. Each slide begins with a separator line and may override
-the defaults in square brackets.
+the `.pin` extension and designed to stay comfortable in the editor of your
+choice. Start with the core ideas, keep the audience text concise, then tune the
+talk while Pinpoint reloads the file live. A presentation contains optional
+global defaults followed by one or more slides. Each slide begins with a
+separator line and may override the defaults in square brackets.
 
 ## A minimal presentation
 

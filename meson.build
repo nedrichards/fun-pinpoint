@@ -17,6 +17,7 @@ cc = meson.get_compiler('c')
 
 pinpoint_id = 'com.nedrichards.pinpoint'
 pinpoint_name = 'Pinpoint'
+pinpoint_tagline = 'Excellent presentations for hackers'
 pinpoint_version = meson.project_version()
 
 glib_req = '>= 2.78'
@@ -45,6 +46,7 @@ config_h = configuration_data()
 config_h.set_quoted('GETTEXT_PACKAGE', 'pinpoint')
 config_h.set_quoted('LOCALEDIR', get_option('prefix') / get_option('localedir'))
 config_h.set_quoted('PINPOINT_APPLICATION_ID', pinpoint_id)
+config_h.set_quoted('PINPOINT_TAGLINE', pinpoint_tagline)
 config_h.set_quoted('PINPOINT_VERSION', pinpoint_version)
 configure_file(output: 'config.h', configuration: config_h)
 

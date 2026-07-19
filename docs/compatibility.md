@@ -65,7 +65,9 @@ fixes.
 - A standard libadwaita About dialog that distinguishes Nick Richards'
   copyright in this GTK 4 implementation from the Intel and contributor
   copyright in the original codebase that inspired it, alongside original
-  author credits, LGPL 2.1 information, and bundled-media licensing
+  author credits, LGPL 2.1 information, and bundled-media licensing; the launch
+  screen, About dialog, CLI, desktop metadata, and AppStream listing share the
+  project's “Excellent presentations for hackers” purpose
 - Display-backed pixel regression fixtures at 800×600, 1280×720 widescreen,
   and 800×600 with 2× scaling, covering stage size, color, text, and shading
 - Automated page-curl CPU, completed-transition idle, executable-size, bundled

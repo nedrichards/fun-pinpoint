@@ -1,10 +1,14 @@
 # Pinpoint
 
-Pinpoint is a GTK 4 and libadwaita rebuild of the original Clutter-based
-presentation tool.
-It reads the same concise `.pin` presentation format and is intended to retain
-the original visual and interaction model while running cleanly on current
-Wayland desktops and inside a Flatpak sandbox.
+Pinpoint helps hackers give excellent presentations. Write down the core ideas
+as concise plain text in the editor of your choice; Pinpoint turns them into
+big, image-led slides and reloads them live while you tune the source. Less
+text makes for a happier audience.
+
+This is a GTK 4 and libadwaita rebuild of the original Clutter-based Pinpoint.
+It reads the same `.pin` presentation format and retains the original visual
+and interaction model while running cleanly on current Wayland desktops and
+inside a Flatpak sandbox.
 
 This repository is under active reconstruction. The compatibility parser,
 GTK/GSK slide renderer, image and SVG backgrounds, GStreamer video playback,

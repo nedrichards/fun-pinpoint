@@ -4,23 +4,24 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>LGPL-2.1-or-later</project_license>
   <name>Pinpoint</name>
-  <summary>Present ideas with clarity</summary>
+  <summary>@TAGLINE@</summary>
   <description>
     <p>
-      Pinpoint creates image-led presentations from a concise plain-text
-      source format. It keeps the speaker focused on a small amount of text,
-      strong imagery, and the audience.
+      Pinpoint helps hackers give excellent presentations. Write down the core
+      ideas in concise plain text, arrange them in the editor of your choice,
+      and tune the result while Pinpoint reloads it live.
     </p>
     <p>
-      Presentations can use styled text, images, scalable graphics, videos,
-      speaker notes, rehearsed timings, transitions, and live source updates.
+      Keep the audience focused with big text and strong imagery. Add styled
+      text, images, scalable graphics, videos, speaker notes, rehearsed
+      timings, transitions, and commands when the talk needs them.
     </p>
   </description>
   <launchable type="desktop-id">com.nedrichards.pinpoint.desktop</launchable>
   <screenshots>
     <screenshot type="default">
       <image>https://dl.flathub.org/media/org/gnome/Pinpoint/aa9580a618997a6f42f4053e04e7f06c/screenshots/image-1_orig.png</image>
-      <caption>An image-led Pinpoint presentation</caption>
+      <caption>Pinpoint presenting its own plain-text introduction</caption>
     </screenshot>
   </screenshots>
   <branding>

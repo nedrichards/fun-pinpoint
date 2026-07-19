@@ -1,5 +1,6 @@
 desktop_conf = configuration_data()
 desktop_conf.set('APPLICATION_ID', pinpoint_id)
+desktop_conf.set('TAGLINE', pinpoint_tagline)
 
 desktop_file = configure_file(
   input: 'com.nedrichards.pinpoint.desktop.in',
@@ -10,6 +11,7 @@ desktop_file = configure_file(
 )
 
 metainfo_conf = configuration_data()
+metainfo_conf.set('TAGLINE', pinpoint_tagline)
 metainfo_conf.set('VERSION', pinpoint_version)
 
 metainfo_file = configure_file(

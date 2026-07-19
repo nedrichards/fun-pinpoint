@@ -1201,7 +1201,8 @@ about_action_cb (GSimpleAction *action,
   adw_about_dialog_set_version (dialog, PINPOINT_VERSION);
   adw_about_dialog_set_comments (
     dialog,
-    "Help hackers give excellent presentations with concise plain-text files.");
+    PINPOINT_TAGLINE ". Write concise plain-text slides in the editor of "
+    "your choice.");
   adw_about_dialog_set_website (dialog,
                                 "https://github.com/nedrichards/fun-pinpoint");
   adw_about_dialog_set_issue_url (
@@ -1255,9 +1256,9 @@ create_setup_view (Pinpoint *pinpoint)
   GtkWidget *content = gtk_box_new (GTK_ORIENTATION_VERTICAL, 18);
   GtkWidget *hero = gtk_box_new (GTK_ORIENTATION_VERTICAL, 10);
   GtkWidget *hero_icon = gtk_image_new_from_icon_name (icon_name);
-  GtkWidget *hero_title = gtk_label_new ("Present with Pinpoint");
+  GtkWidget *hero_title = gtk_label_new (PINPOINT_TAGLINE);
   GtkWidget *hero_description = gtk_label_new (
-    "Choose a presentation folder and how you want to deliver it.");
+    "Write concise slides in your text editor, then tune them live.");
   GtkWidget *learn_group = adw_preferences_group_new ();
   GtkWidget *learn_row = adw_action_row_new ();
   GtkWidget *learn_icon = gtk_image_new_from_icon_name (
@@ -1314,11 +1315,12 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_box_append (GTK_BOX (content), hero);
 
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (learn_group),
-                                   "Learn Pinpoint");
+                                   "See How Pinpoint Works");
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (learn_row),
-                                 "Introduction Presentation");
-  adw_action_row_set_subtitle (ADW_ACTION_ROW (learn_row),
-                               "Explore the format, features, and controls");
+                                 "Introduction, Made with Pinpoint");
+  adw_action_row_set_subtitle (
+    ADW_ACTION_ROW (learn_row),
+    "Explore the plain-text format, visuals, and controls");
   gtk_widget_add_css_class (learn_icon, "dim-label");
   adw_action_row_add_prefix (ADW_ACTION_ROW (learn_row), learn_icon);
   gtk_actionable_set_action_name (GTK_ACTIONABLE (view_introduction),
@@ -1340,7 +1342,7 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_box_append (GTK_BOX (content), learn_group);
 
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group),
-                                   "Presentation Setup");
+                                   "Your Presentation");
   pinpoint->setup_fullscreen = ADW_SWITCH_ROW (adw_switch_row_new ());
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (pinpoint->setup_fullscreen),
                                  "Start Fullscreen");
@@ -1988,7 +1990,7 @@ main (int   argc,
   g_set_application_name ("Pinpoint");
   gst_init (&argc, &argv);
 
-  option_context = g_option_context_new ("- Presentations made easy");
+  option_context = g_option_context_new ("- " PINPOINT_TAGLINE);
   g_option_context_add_main_entries (option_context, options, NULL);
   if (!g_option_context_parse (option_context, &argc, &argv, &error))
     {
