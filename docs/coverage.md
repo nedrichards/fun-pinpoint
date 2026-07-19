@@ -14,9 +14,10 @@ The runner creates `_build-coverage` with Meson's `b_coverage` option, deletes
 stale counters, and builds in the SDK. It then executes the parser, rendering,
 performance, pixel-profile, lifecycle, and whole-application tests directly on
 the host while resolving their libraries and GStreamer helpers from that exact
-SDK commit. It also resolves the active EGL, DRI, GBM, and Vulkan paths from the
-Flatpak GL extension version declared by the SDK. A missing extension or failed
-OpenGL 3.3 page-curl context is a test failure, not a skip or software fallback.
+SDK commit and its automatically installed codec extension. It also resolves
+the active EGL, DRI, GBM, and Vulkan paths from the Flatpak GL extension version
+declared by the SDK. A missing extension or failed OpenGL 3.3 page-curl context
+is a test failure, not a skip or software fallback.
 The focused page-curl lifecycle creates textures, compiles and links its GLSL,
 uploads both pages, renders both directions, and destroys the GL resources.
 This host boundary is necessary for the real Wayland display and is the same
@@ -44,6 +45,10 @@ use a line limit because GTK frame scheduling, process startup, portals,
 GStreamer, PipeWire, and graphics drivers can produce compiler-branch variation
 without changing application behaviour. Their function and branch figures are
 still reported and should guide new scenario tests.
+
+The parser line ratchet retains defensive fallbacks for content types which
+GLib cannot map to a MIME type. Normal file and URI guesses do not produce that
+state in the test environment, so the guards remain explicitly uncovered.
 
 The current deterministic line gates include:
 

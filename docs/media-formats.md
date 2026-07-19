@@ -2,8 +2,11 @@
 
 Pinpoint deliberately supports a small, portable video set that is decoded by
 the production GNOME Flatpak runtime. Host-installed GStreamer plugins are not
-visible inside the sandbox and are not part of this promise. Optional Flatpak
-codec extensions are also excluded from the required playback path.
+visible inside the sandbox and are not part of this promise. GNOME Platform 50
+inherits the Freedesktop 25.08 `codecs-extra` extension, which Flatpak installs
+automatically with applications unless patented codecs have been explicitly
+masked. H.264 support uses that declared runtime extension; AV1, VP8, VP9,
+Theora, GIF, Opus, and Vorbis use base-runtime components.
 
 For new presentations, prefer **WebM with AV1 Main or VP9 Profile 0 video and
 Opus audio**. VP9 is used by the bundled introduction; both codecs have a
@@ -27,8 +30,11 @@ must still fit the decoder, GPU, memory, and display resources of the machine
 on which it is shown.
 
 Hardware decoding is opportunistic. The same files must remain decodable by
-the GNOME runtime's base software elements when a suitable hardware decoder or
-driver is unavailable.
+the GNOME runtime's software elements when a suitable hardware decoder or
+driver is unavailable. Pinpoint's H.264 support guarantee assumes the standard
+automatically installed `codecs-extra` extension. Installations that mask or
+remove it are unsupported for H.264; use AV1 or VP9 WebM when that extension
+cannot be assumed.
 
 ## Common 2026 inputs outside the contract
 
@@ -89,8 +95,9 @@ when a video cannot be decoded.
 `tests/test-media-formats.c` checks the production contract against synthetic
 fixtures in `tests/fixtures/media-formats/` and the bundled VP9/Opus video. It:
 
-- verifies that every required demuxer and software decoder comes from the base
-  runtime rather than `/extensions/` or `codecs-extra`;
+- verifies every required demuxer and software decoder in the production
+  runtime, including the automatically installed codec extension used by
+  H.264;
 - discovers the expected container, codecs, H.264 and AV1 profiles, AAC-LC
   profile, 8-bit 4:2:0 layout, and BT.601/BT.709 signalling;
 - decodes every supported fixture to raw video and, where present, raw audio;

@@ -44,7 +44,7 @@ not hard-coded requirements for other drivers.
 The portable input contract is intentionally narrower than all formats which
 GStreamer may decode. See [supported media formats](media-formats.md) for the
 tested containers, codecs, profiles, SDR colour layouts, and base-runtime
-fallback requirement.
+or runtime-declared codec-extension fallback requirement.
 
 ### Still images and SVG
 

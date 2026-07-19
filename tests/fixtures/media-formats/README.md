@@ -20,7 +20,7 @@ encoded stream metadata and a decoded raw preroll.
 
 The fixtures were generated with GStreamer 1.26.11 in the GNOME 50 Flatpak
 runtime. Test patterns and sine-wave audio are generated content. The H.264
-encoder comes from the optional `codecs-extra` extension; the AV1 fixtures use
-the base runtime's AOM encoder. Playback tests require only base-runtime
-components and explicitly verify the dav1d software decoder independently of
-hardware decoders and optional codec extensions.
+encoder and decoder come from the runtime-declared, automatically installed
+`codecs-extra` extension; the AV1 fixtures use the base runtime's AOM encoder.
+Playback tests explicitly verify the base dav1d AV1 software decoder
+independently of hardware decoders and codec extensions.

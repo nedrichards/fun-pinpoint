@@ -165,11 +165,15 @@ test_background_content_sniffing (void)
                                                    NULL);
   g_autofree char *temporary_path = NULL;
   g_autofree char *video_path = NULL;
+  g_autofree char *video_uri = NULL;
   g_autofree char *presentation_path = NULL;
+  g_autofree char *presentation_source = NULL;
   g_autofree char *contents = NULL;
   gsize length = 0;
   g_autoptr (GFile) file = NULL;
+  g_autoptr (GFile) root = g_file_new_for_path ("/");
   g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (PpPresentation) root_presentation = NULL;
   g_autoptr (GError) error = NULL;
 
   g_assert_true (g_file_get_contents (source_path, &contents, &length, &error));
@@ -177,11 +181,16 @@ test_background_content_sniffing (void)
   temporary_path = g_dir_make_tmp ("pinpoint-content-type-XXXXXX", &error);
   g_assert_no_error (error);
   video_path = g_build_filename (temporary_path, "extensionless-media", NULL);
+  video_uri = g_filename_to_uri (video_path, NULL, &error);
+  g_assert_no_error (error);
   presentation_path = g_build_filename (temporary_path, "talk.pin", NULL);
+  presentation_source = g_strdup_printf (
+    "-- [extensionless-media]\nRelative video\n-- [%s]\nFile URI video\n",
+    video_uri);
   g_assert_true (g_file_set_contents (video_path, contents, length, &error));
   g_assert_no_error (error);
   g_assert_true (g_file_set_contents (presentation_path,
-                                      "-- [extensionless-media]\nVideo\n",
+                                      presentation_source,
                                       -1,
                                       &error));
   g_assert_no_error (error);
@@ -193,6 +202,20 @@ test_background_content_sniffing (void)
   g_assert_cmpint (pp_presentation_get_slide (presentation, 0)->background_type,
                    ==,
                    PP_BACKGROUND_VIDEO);
+  g_assert_cmpint (pp_presentation_get_slide (presentation, 1)->background_type,
+                   ==,
+                   PP_BACKGROUND_VIDEO);
+
+  root_presentation = pp_presentation_parse ("-- [missing.mp4]\nVideo\n",
+                                             root,
+                                             FALSE,
+                                             &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (root_presentation);
+  g_assert_cmpint (
+    pp_presentation_get_slide (root_presentation, 0)->background_type,
+    ==,
+    PP_BACKGROUND_VIDEO);
 
   g_assert_cmpint (g_remove (presentation_path), ==, 0);
   g_assert_cmpint (g_remove (video_path), ==, 0);

@@ -36,6 +36,9 @@ sdk_libdir="$sdk_location/files/lib/$arch-linux-gnu"
 # Flatpak extension branch that the SDK declares.
 . "$root/tests/sdk-host-environment.sh"
 pinpoint_configure_sdk_host_environment "$sdk_location" "$sdk_libdir"
+registry_file="$build_dir/gstreamer-registry.bin"
+rm -f "$registry_file"
+export GST_REGISTRY="$registry_file"
 export ASAN_OPTIONS=${ASAN_OPTIONS:-detect_leaks=1:halt_on_error=1:abort_on_error=1:print_summary=1:detect_stack_use_after_return=1:strict_string_checks=1:suppressions=$root/tests/asan.supp}
 export LSAN_OPTIONS=${LSAN_OPTIONS:-suppressions=$root/tests/lsan.supp:print_suppressions=1}
 export UBSAN_OPTIONS=${UBSAN_OPTIONS:-halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1}
@@ -61,7 +64,9 @@ GDK_SCALE=2 "$build_dir/tests/test-pixels" \
   "$root/tests/fixtures/native-transitions.pin" \
   "$root/tests/fixtures/page-curl.pin" \
   "$root/tests/fixtures/multi-monitor.pin" \
-  "$root/tests/fixtures/camera.pin"
+  "$root/tests/fixtures/camera.pin" \
+  "$root/tests/fixtures/media-formats.pin" \
+  "$root/tests/fixtures/corrupt-video.pin"
 "$build_dir/tests/test-application" \
   "$build_dir/src/pinpoint" \
   "$root/tests/fixtures/multi-monitor.pin" \

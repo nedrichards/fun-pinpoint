@@ -63,9 +63,9 @@
       "uncovered_lines": 146
     },
     "src/pp-presentation.c": {
-      "uncovered_branches": 146,
+      "uncovered_branches": 156,
       "uncovered_functions": 3,
-      "uncovered_lines": 60
+      "uncovered_lines": 62
     },
     "src/pp-render.c": {
       "uncovered_branches": 22,

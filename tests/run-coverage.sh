@@ -36,6 +36,9 @@ arch=$(flatpak --default-arch)
 sdk_libdir="$sdk_location/files/lib/$arch-linux-gnu"
 . "$root/tests/sdk-host-environment.sh"
 pinpoint_configure_sdk_host_environment "$sdk_location" "$sdk_libdir"
+registry_file="$build_dir/gstreamer-registry.bin"
+rm -f "$registry_file"
+export GST_REGISTRY="$registry_file"
 export G_DEBUG=${G_DEBUG:-fatal-criticals}
 
 "$build_dir/tests/test-parser" "$root/tests/fixtures/compatibility.pin"
@@ -55,7 +58,9 @@ GDK_SCALE=2 "$build_dir/tests/test-pixels" \
   "$root/tests/fixtures/native-transitions.pin" \
   "$root/tests/fixtures/page-curl.pin" \
   "$root/tests/fixtures/multi-monitor.pin" \
-  "$root/tests/fixtures/camera.pin"
+  "$root/tests/fixtures/camera.pin" \
+  "$root/tests/fixtures/media-formats.pin" \
+  "$root/tests/fixtures/corrupt-video.pin"
 "$build_dir/tests/test-application" \
   "$build_dir/src/pinpoint" \
   "$root/tests/fixtures/multi-monitor.pin" \

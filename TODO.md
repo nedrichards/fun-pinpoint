@@ -31,7 +31,9 @@
   Baseline/Main/High, Ogg Theora, animated GIF, Opus/Vorbis/AAC-LC, and
   conventional 8-bit 4:2:0 BT.601/BT.709 SDR. Synthetic accepted fixtures and
   a corrupt MP4 rejection fixture are retained and tested independently of
-  host plugins and optional Flatpak codec extensions.
+  host plugins. H.264 is supplied by the runtime-declared, automatically
+  installed codec extension; AV1 software fallback is verified against the
+  base runtime's dav1d decoder.
 - [x] Audit the media and rendering pipeline for Wayland-first hardware
   acceleration and output quality. Video now exposes its negotiated caps and
   selected elements, the camera can negotiate PipeWire directly with the GTK
