@@ -151,11 +151,31 @@ therefore remains opportunistic and must not be described as universal direct
 scanout. Sysprof display timings and battery measurements remain part of the
 separate hardware-validation task.
 
-GTK 4.22's `GtkSvg` is a GTK-native SVG paintable and is worth a focused
-prototype for self-contained static SVGs. It implements a documented subset of
-SVG, while Pinpoint currently relies on librsvg for broad historical
-compatibility and external-resource handling. Use it only if the compatibility
-and pixel suites can select a reliable fast path and retain librsvg fallback.
+The focused GTK 4.22.4 `GtkSvg` comparison is complete. Both renderers produce
+effectively identical output for the existing static-shape pixel fixture: at
+800x600 the mean channel difference was 0.006/255, the maximum edge-pixel
+difference was 18/255, and only 0.007% of pixels differed by more than the
+suite's 12-point tolerance. The compatibility probes were more important:
+
+| SVG feature | GtkSvg 4.22.4 | librsvg 2.62 |
+|---|---|---|
+| Basic shapes, path strokes and view box | Accepted | Accepted |
+| CSS `<style>` element | `NOT_IMPLEMENTED` | Accepted |
+| `<textPath>` | `NOT_IMPLEMENTED` | Accepted |
+| `<feTurbulence>` filter | `NOT_IMPLEMENTED` | Accepted |
+
+The `GtkSvg::error` signal is sufficiently explicit to identify those cases,
+but using it as a fallback gate would parse unsupported documents twice. In
+representative 250-iteration runs, cold parsing was in the same tens-of-
+microseconds range for both libraries. `GtkSvg` recorded a 320x240 node in
+roughly 7 us versus roughly 12 us for librsvg, but Pinpoint performs that work
+once and caches the size-specific node. PDF export also requires librsvg's
+Cairo vector path, so a GTK fast path would not remove a dependency or reduce
+the installed size. Pinpoint therefore keeps its shared librsvg source as the
+single production renderer. `test-svg-renderers` keeps the pixel comparison,
+compatibility probes, structured fallback errors, and indicative timings
+visible; a future GTK expansion can make a newly supported probe pass without
+turning that improvement into a test failure.
 
 The renderer now uses GTK 4.22's `gtk-interface-reduced-motion` preference in
 addition to the older all-animations switch when deciding whether to suppress
@@ -199,6 +219,7 @@ remains intact.
 - [`GdkTexture`](https://docs.gtk.org/gdk4/class.Texture.html)
 - [`GtkGraphicsOffload`](https://docs.gtk.org/gtk4/class.GraphicsOffload.html)
 - [`GtkSvg`](https://docs.gtk.org/gtk4/class.Svg.html)
+- [librsvg supported SVG and CSS features](https://gnome.pages.gitlab.gnome.org/librsvg/devel-docs/features.html)
 - [`GtkSettings:gtk-interface-reduced-motion`](https://docs.gtk.org/gtk4/property.Settings.gtk-interface-reduced-motion.html)
 - [`GdkTextureDownloader`](https://docs.gtk.org/gdk4/struct.TextureDownloader.html)
 - [`GdkGLTextureBuilder`](https://docs.gtk.org/gdk4/class.GLTextureBuilder.html)

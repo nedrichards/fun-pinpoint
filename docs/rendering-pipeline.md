@@ -91,6 +91,14 @@ content for the actual output scale while repeated video-frame snapshots reuse
 the size-specific node. An SVG source-file change invalidates the shared handle
 and all affected stage nodes immediately.
 
+GTK 4.22's `GtkSvg` was tested against that pixel fixture and representative
+compatibility probes. It matched librsvg for the simple self-contained SVG but
+does not implement CSS `<style>`, `<textPath>`, or `<feTurbulence>`. Its
+one-time node-recording saving was only a few microseconds after similar parse
+costs. A fallback would therefore add a second parser for unsupported decks,
+while PDF export would still require librsvg. The shared librsvg handle remains
+the sole display and export path so both outputs keep the broader SVG contract.
+
 ### Text and ordinary transitions
 
 Text remains a Pango layout represented by GTK/GSK text render nodes. Pinpoint

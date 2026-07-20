@@ -163,6 +163,19 @@ pixel_test = executable(
   dependencies: pinpoint_ui_dep,
 )
 
+svg_renderer_test = executable(
+  'test-svg-renderers',
+  'test-svg-renderers.c',
+  dependencies: [gtk_dep, rsvg_dep],
+)
+
+test(
+  'svg-renderers',
+  svg_renderer_test,
+  args: files('fixtures/svg-quality.svg'),
+  timeout: 10,
+)
+
 pixel_fixture = files('fixtures/pixel-reference.pin')
 svg_pixel_fixture = files('fixtures/svg-quality.pin')
 raster_cache_fixture = files('fixtures/raster-cache.pin')

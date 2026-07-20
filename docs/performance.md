@@ -23,7 +23,9 @@ hardware.
   1.4 MiB budget.
 - Renderer pixel checks cover 800×600, 1280×720 widescreen, and 800×600 at 2×
   scale. They verify stage dimensions, background color, text, shading, and
-  cached vector SVG rendering.
+  cached vector SVG rendering. A separate SVG comparison renders the existing
+  fixture through both librsvg and GTK 4.22's `GtkSvg`, checks bounded pixel
+  differences, and exercises GTK's structured unsupported-feature errors.
 - AddressSanitizer, UndefinedBehaviorSanitizer, and LeakSanitizer cover parser,
   media, transition, page-curl, and shutdown lifecycles. Leak suppressions are
   limited to documented process-lifetime Fontconfig and Mesa EGL display
@@ -45,6 +47,10 @@ flatpak run --user --filesystem="$PWD" \
 flatpak run --user --filesystem="$PWD" \
   --command="$PWD/_build/tests/test-size" org.gnome.Sdk//50 \
   "$PWD/_build/src/pinpoint" "$PWD/data/introduction/bunny.webm" --verbose
+flatpak run --user --filesystem="$PWD" \
+  --device=dri --socket=wayland --socket=fallback-x11 \
+  --command="$PWD/_build/tests/test-svg-renderers" org.gnome.Sdk//50 \
+  "$PWD/tests/fixtures/svg-quality.svg" --verbose
 ```
 
 `tests/run-leak-checks.sh` still compiles entirely in the GNOME 50 SDK, then
@@ -60,9 +66,9 @@ copy boundary. Its production work removes speaker idle work, asynchronously
 prefetches watched and byte-bounded raster assets, shares parsed SVG sources,
 moves interactive PDF export off the GTK thread, and scores thumbnail
 candidates without copying them. Stable media backgrounds now use GTK's
-opportunistic compositor-offload path with automatic GSK fallback; remaining
-PDF memory bounds and the GTK-native SVG comparison stay evidence-gated in the
-backlog.
+opportunistic compositor-offload path with automatic GSK fallback. PDF export
+now has cancellation and bounded raster memory, and the GTK-native SVG
+comparison concluded that the cached librsvg path should remain primary.
 
 ## Page-curl work avoided
 

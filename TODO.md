@@ -45,9 +45,17 @@ belongs here.
   Raster and video backgrounds are capped at a 144-DPI-equivalent export bound,
   only the most recent decoded surface is retained, and the destination is
   replaced only after a complete successful render.
-- [ ] Compare GTK 4.22's `GtkSvg` paintable with librsvg on the SVG
-  compatibility and pixel suites, retaining the existing shared librsvg source
-  as the fallback for unsupported SVG features.
+- [x] Compare GTK 4.22's `GtkSvg` paintable with librsvg. On GTK 4.22.4 the
+  existing pixel fixture is visually equivalent (mean channel difference
+  0.006/255, with 0.007% of pixels outside the existing tolerance), and
+  `GtkSvg` records its 320x240 node a few microseconds faster. Cold parsing is
+  the same order of magnitude, while `GtkSvg` reports unsupported `<style>`,
+  `<textPath>`, and `<feTurbulence>` content that librsvg accepts. Because
+  Pinpoint already caches each size-specific node, PDF export still needs
+  librsvg's Cairo rendering, and the dependency therefore cannot be removed,
+  keep the shared librsvg source as the sole production path rather than paying
+  for a dual-parser fast path. `test-svg-renderers` preserves the compatibility,
+  pixel-difference, fallback-signal, and indicative-cost comparison.
 - [ ] Resume hardware performance validation after the pending local update
   unblocks Sysprof. Capture page-curl frame pacing, its one-time GSK-to-CPU-to-GL
   transfer, peak texture residency, and colour consistency on representative
