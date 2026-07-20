@@ -17,8 +17,9 @@ and rehearsal views, embedded sandbox commands, PDF video thumbnails, legacy
 ClutterState transition JSON, and PDF export are working.
 See [the presentation format reference](docs/presentation-format.md) for the
 complete `.pin` syntax, [the compatibility ledger](docs/compatibility.md) for
-retained behaviour and validation history, and [the product backlog](TODO.md)
-for all open work.
+retained behaviour and validation history, [external editor
+support](docs/external-editors.md) for GtkSourceView highlighting and live
+editing, and [the product backlog](TODO.md) for all open work.
 
 ## Build
 
@@ -161,10 +162,12 @@ Small amounts of concise text
 ```
 
 The [complete format reference](docs/presentation-format.md) documents every
-setting and retained compatibility rule. The historical `introduction.pin` is
-bundled as a worked example: choose **View** beside **Introduction
-Presentation** on the launch screen, or use its save button to make an editable
-copy with all of its assets.
+setting and retained compatibility rule. Native installs also provide
+GtkSourceView 5 highlighting for `.pin` files; see [external editor
+support](docs/external-editors.md) for GNOME Text Editor and Flatpak details.
+The historical `introduction.pin` is bundled as a worked example: choose
+**View** beside **Introduction Presentation** on the launch screen, or use its
+save button to make an editable copy with all of its assets.
 
 ## Controls
 

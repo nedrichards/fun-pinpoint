@@ -32,6 +32,13 @@ install_data(
   install_dir: get_option('datadir') / 'mime/packages',
 )
 
+pinpoint_language = files('pinpoint.lang')
+
+install_data(
+  pinpoint_language,
+  install_dir: get_option('datadir') / 'gtksourceview-5/language-specs',
+)
+
 desktop_file_validate = find_program('desktop-file-validate', required: false)
 if desktop_file_validate.found()
   test('validate desktop file', desktop_file_validate, args: desktop_file)

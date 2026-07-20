@@ -6,12 +6,11 @@ belongs here.
 
 ## Open work
 
-- [ ] Improve the external-editor experience without making an editor part of
-  the presentation runtime. Start with an installed GtkSourceView 5 language
-  definition for `.pin`: highlight defaults and slide separators, settings,
-  audience text, comments/speaker notes, commands, and Pango markup; associate
-  it with Pinpoint's MIME type; validate the definition automatically and in
-  GNOME Text Editor. This is the next implementation task.
+- [ ] Contribute the Pinpoint language definition to GtkSourceView so Flatpak
+  editors receive it from their runtime. Native packages install it directly;
+  until the upstream definition reaches the GNOME runtime, sandboxed GNOME Text
+  Editor uses the documented per-user installation path because one Flatpak
+  cannot modify another application's `/app`.
 - [ ] Replace the inherited Pinpoint 0.1.8 AppStream screenshot before a
   supported release. Capture the current GTK 4 launch, audience, and speaker
   experiences at representative sizes, keep the images in a stable public
@@ -65,6 +64,17 @@ belongs here.
   out of the lean presentation path when the editor is not installed or used.
 
 ## Completed work
+
+- [x] Improve the external-editor experience without making an editor part of
+  the presentation runtime. The installed GtkSourceView 5 definition associates
+  `.pin` and `application/x-pinpoint`, and highlights recommended default lines,
+  slide separators, settings, audience text, speaker notes, commands, Pango
+  markup, entities, and escapes. The pinned SDK validates its schema, MIME/glob
+  discovery, and semantic contexts automatically; the installed GNOME Text
+  Editor and GNOME Builder Flatpaks also discover it through their real
+  GtkSourceView runtimes. The editor workflow, sandbox boundary, native and
+  per-Flatpak installation paths, and generic GtkSourceView recipe are
+  documented in `docs/external-editors.md`.
 
 - [x] Complete local desktop remote-control evaluation. A general-purpose GNOME
   MPRIS client selected and controlled two simultaneous instances inside the

@@ -57,15 +57,32 @@ backslash (`\\`).
 All non-setting content after a separator becomes the slide text. Leading and
 trailing newlines are removed; other whitespace is retained.
 
-Pango markup is enabled by default:
+### Pango markup
+
+Audience text uses [Pango markup][pango-markup] by default. Pango markup is a
+small XML-like language for applying typography and colour to parts of a text
+layout; it is not HTML. Its convenience tags are `<b>` for bold, `<i>` for
+italic, `<s>` for strikethrough, `<u>` for underline, `<big>` and `<small>` for
+relative size, `<sub>` and `<sup>` for position, and `<tt>` for monospace text.
+The general `<span>` tag supports foreground and background colours, font
+family, size, style, weight, underline, letter spacing, and the other
+attributes in the [authoritative Pango markup reference][pango-markup].
 
 ```text
 --
 This is <b>bold</b>, <i>italic</i>, and <span foreground="yellow">yellow</span>.
 ```
 
-Use `[no-markup]` when angle-bracketed text should be shown literally, and
-`[markup]` to turn markup back on.
+Tags must be properly nested and closed, and attribute values must be quoted.
+Because the syntax is XML-like, write literal `&`, `<`, and `>` characters as
+`&amp;`, `&lt;`, and `&gt;`. Use `[no-markup]` when angle-bracketed text and
+ampersands should instead be shown literally, and `[markup]` to turn Pango
+markup back on for a later slide.
+
+Pango markup applies only to audience text. Speaker notes and setting values
+are plain text.
+
+### Speaker notes
 
 A `#` in the first column starts a speaker-note line. The marker is removed,
 the line is omitted from the audience slide, and consecutive note lines are
@@ -93,13 +110,13 @@ background, preserving the original format.
 | Setting | Meaning | Default |
 |---|---|---|
 | `[stage-color=COLOR]` | Base stage color shown behind fitted or missing media | `black` on screen; `white` for PDF |
-| `[font=DESCRIPTION]` | Pango font description for audience text | `Sans 60px` |
+| `[font=DESCRIPTION]` | [Pango font description][pango-font-description] for audience text | `Sans 60px` |
 | `[text-color=COLOR]` | Audience text color | `white` |
 | `[text-align=left\|center\|right]` | Alignment within multiline text | `left` |
 | `[center]` | Place the text in the center | default |
 | `[top]`, `[bottom]`, `[left]`, `[right]` | Place text at an edge | — |
 | `[top-left]`, `[top-right]`, `[bottom-left]`, `[bottom-right]` | Place text at a corner | — |
-| `[markup]`, `[no-markup]` | Enable or disable Pango markup | markup enabled |
+| `[markup]`, `[no-markup]` | Enable or disable [Pango markup](#pango-markup) | markup enabled |
 
 Colors use GTK color syntax. Common names such as `black`, `white`, and `red`,
 hex values such as `#3584e4`, and CSS-style forms such as `rgb(53,132,228)` are
@@ -317,7 +334,9 @@ sandbox. They cannot assume access to arbitrary host programs or files.
 Pinpoint monitors the source file and reloads it after changes. It keeps the
 presenter at the first slide whose source changed, making a text editor and the
 presentation window practical side by side. Relative assets are re-resolved
-from the presentation directory.
+from the presentation directory. Native installs include a GtkSourceView 5
+language definition for `.pin` files; see [external editor
+support](external-editors.md) for GNOME Text Editor and Flatpak setup.
 
 ## PDF export
 
@@ -351,3 +370,6 @@ comment-derived notes.
 These rules are intentional compatibility behavior, not recommendations for
 new files. New presentations should use `--` separators, explicit setting
 names where available, and assets stored beside the presentation.
+
+[pango-markup]: https://docs.gtk.org/Pango/pango_markup.html
+[pango-font-description]: https://docs.gtk.org/Pango/type_func.FontDescription.from_string.html

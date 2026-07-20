@@ -34,6 +34,40 @@ test(
   args: files('fixtures/compatibility.pin'),
 )
 
+xmllint = find_program('xmllint', required: false)
+gtksourceview_test_dep = dependency('gtksourceview-5', required: false)
+
+if xmllint.found()
+  language_validation_args = ['--noout', pinpoint_language]
+  if gtksourceview_test_dep.found()
+    gtksourceview_prefix = gtksourceview_test_dep.get_variable(
+      pkgconfig: 'prefix',
+      default_value: '/usr',
+    )
+    language_schema = gtksourceview_prefix / 'share/gtksourceview-5/language-specs/language2.rng'
+    language_validation_args = [
+      '--relaxng',
+      language_schema,
+      '--noout',
+      pinpoint_language,
+    ]
+  endif
+  test('validate Pinpoint language definition', xmllint, args: language_validation_args)
+endif
+
+if gtksourceview_test_dep.found()
+  language_definition_test = executable(
+    'test-language-definition',
+    'test-language-definition.c',
+    dependencies: [gtksourceview_test_dep],
+  )
+  test(
+    'Pinpoint language highlighting',
+    language_definition_test,
+    args: [pinpoint_language, files('fixtures/editor-highlighting.pin')],
+  )
+endif
+
 performance_test = executable(
   'test-performance',
   'test-performance.c',
