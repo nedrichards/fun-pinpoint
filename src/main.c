@@ -18,6 +18,8 @@
 #include <gtk/gtk.h>
 #include <gst/gst.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #define PORTAL_BUS_NAME "org.freedesktop.portal.Desktop"
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
@@ -53,6 +55,13 @@ typedef struct
   gboolean speaker_mode;
   gboolean rehearse;
   gboolean exporting_pdf;
+  GCancellable *pdf_export_cancellable;
+  AdwAlertDialog *pdf_export_dialog;
+  GtkProgressBar *pdf_export_progress;
+  guint pdf_progress_id;
+  gint pdf_completed_slides;
+  gint pdf_total_slides;
+  int termination_signal;
   gboolean bundled_read_only;
   gboolean presenting;
   PpPdfOptions pdf_options;
@@ -74,12 +83,138 @@ static void open_presentation_folder_dialog (Pinpoint *pinpoint);
 static void start_monitor (Pinpoint *pinpoint);
 
 static gboolean
-termination_signal_cb (gpointer user_data)
+termination_signal_cb (Pinpoint *pinpoint,
+                       int       signal_number)
 {
-  Pinpoint *pinpoint = user_data;
-
-  g_application_quit (G_APPLICATION (pinpoint->application));
+  pinpoint->termination_signal = signal_number;
+  if (pinpoint->pdf_export_cancellable != NULL)
+    g_cancellable_cancel (pinpoint->pdf_export_cancellable);
+  if (pinpoint->application != NULL)
+    g_application_quit (G_APPLICATION (pinpoint->application));
   return G_SOURCE_CONTINUE;
+}
+
+static gboolean
+termination_sigint_cb (gpointer user_data)
+{
+  return termination_signal_cb (user_data, SIGINT);
+}
+
+static gboolean
+termination_sigterm_cb (gpointer user_data)
+{
+  return termination_signal_cb (user_data, SIGTERM);
+}
+
+typedef struct
+{
+  GMainLoop *loop;
+  GCancellable *cancellable;
+  GError *error;
+  gboolean success;
+  gboolean interactive;
+  gint completed_slides;
+  gint total_slides;
+} CliPdfExport;
+
+static void
+cli_pdf_progress_cb (guint    completed_slides,
+                     guint    total_slides,
+                     gpointer user_data)
+{
+  CliPdfExport *export = user_data;
+
+  g_atomic_int_set (&export->completed_slides, completed_slides);
+  g_atomic_int_set (&export->total_slides, total_slides);
+}
+
+static gboolean
+print_cli_pdf_progress_cb (gpointer user_data)
+{
+  CliPdfExport *export = user_data;
+  int completed = g_atomic_int_get (&export->completed_slides);
+  int total = g_atomic_int_get (&export->total_slides);
+  int filled = total > 0 ? (completed * 24) / total : 0;
+  int percent = total > 0 ? (completed * 100) / total : 0;
+  char bar[25];
+
+  memset (bar, '#', filled);
+  memset (bar + filled, '-', 24 - filled);
+  bar[24] = '\0';
+  if (total > 0)
+    g_printerr ("\rExporting PDF  [%s] %3d%%  %d/%d slides\033[K",
+                bar,
+                percent,
+                completed,
+                total);
+  else
+    g_printerr ("\rExporting PDF  [preparing]\033[K");
+  return G_SOURCE_CONTINUE;
+}
+
+static void
+cli_pdf_export_finished_cb (GObject      *source,
+                            GAsyncResult *result,
+                            gpointer      user_data)
+{
+  CliPdfExport *export = user_data;
+
+  (void) source;
+  export->success = pp_pdf_export_file_finish (result, &export->error);
+  g_main_loop_quit (export->loop);
+}
+
+static int
+run_cli_pdf_export (Pinpoint *pinpoint,
+                    GFile    *output)
+{
+  g_autoptr (GMainLoop) loop = g_main_loop_new (NULL, FALSE);
+  g_autoptr (GCancellable) cancellable = g_cancellable_new ();
+  CliPdfExport export = {
+    .loop = loop,
+    .cancellable = cancellable,
+    .interactive = isatty (STDERR_FILENO),
+  };
+  guint progress_id = 0;
+
+  g_set_object (&pinpoint->pdf_export_cancellable, cancellable);
+  if (export.interactive)
+    progress_id = g_timeout_add (80, print_cli_pdf_progress_cb, &export);
+  pp_pdf_export_file_async_full (pinpoint->file,
+                                 pinpoint->ignore_comments,
+                                 output,
+                                 &pinpoint->pdf_options,
+                                 cancellable,
+                                 cli_pdf_progress_cb,
+                                 &export,
+                                 cli_pdf_export_finished_cb,
+                                 &export);
+  g_main_loop_run (loop);
+
+  if (progress_id != 0)
+    g_source_remove (progress_id);
+  if (export.interactive && pinpoint->termination_signal != 0)
+    g_printerr ("\rExporting PDF  [cancelled]\033[K\n");
+  if (export.interactive && export.success)
+    {
+      g_atomic_int_set (&export.completed_slides,
+                        g_atomic_int_get (&export.total_slides));
+      print_cli_pdf_progress_cb (&export);
+      g_printerr ("\n");
+    }
+  g_clear_object (&pinpoint->pdf_export_cancellable);
+  if (pinpoint->termination_signal != 0)
+    {
+      g_clear_error (&export.error);
+      return 128 + pinpoint->termination_signal;
+    }
+  if (!export.success)
+    {
+      g_printerr ("pinpoint: %s\n", export.error->message);
+      g_clear_error (&export.error);
+      return EXIT_FAILURE;
+    }
+  return EXIT_SUCCESS;
 }
 
 static gboolean
@@ -538,6 +673,93 @@ show_export_success (Pinpoint *pinpoint,
 }
 
 static void
+pdf_export_progress_cb (guint    completed_slides,
+                        guint    total_slides,
+                        gpointer user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  g_atomic_int_set (&pinpoint->pdf_completed_slides, completed_slides);
+  g_atomic_int_set (&pinpoint->pdf_total_slides, total_slides);
+}
+
+static gboolean
+update_pdf_progress_cb (gpointer user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  int completed = g_atomic_int_get (&pinpoint->pdf_completed_slides);
+  int total = g_atomic_int_get (&pinpoint->pdf_total_slides);
+  g_autofree char *text = NULL;
+
+  if (pinpoint->pdf_export_progress == NULL)
+    return G_SOURCE_REMOVE;
+  if (total <= 0)
+    {
+      gtk_progress_bar_pulse (pinpoint->pdf_export_progress);
+      return G_SOURCE_CONTINUE;
+    }
+  text = g_strdup_printf ("%d of %d slides", completed, total);
+  gtk_progress_bar_set_fraction (pinpoint->pdf_export_progress,
+                                 (double) completed / total);
+  gtk_progress_bar_set_text (pinpoint->pdf_export_progress, text);
+  return G_SOURCE_CONTINUE;
+}
+
+static void
+pdf_progress_response_cb (AdwAlertDialog *dialog,
+                          const char     *response,
+                          gpointer        user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  (void) dialog;
+  if (g_str_equal (response, "cancel") && pinpoint->exporting_pdf &&
+      pinpoint->pdf_export_cancellable != NULL)
+    g_cancellable_cancel (pinpoint->pdf_export_cancellable);
+}
+
+static void
+show_pdf_progress (Pinpoint *pinpoint)
+{
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG (
+    adw_alert_dialog_new ("Exporting PDF", "Rendering presentation slides…"));
+  GtkWidget *progress = gtk_progress_bar_new ();
+
+  gtk_progress_bar_set_show_text (GTK_PROGRESS_BAR (progress), TRUE);
+  gtk_progress_bar_set_text (GTK_PROGRESS_BAR (progress), "Preparing…");
+  adw_alert_dialog_set_extra_child (dialog, progress);
+  adw_alert_dialog_add_response (dialog, "cancel", "Cancel");
+  adw_alert_dialog_set_close_response (dialog, "cancel");
+  g_signal_connect (dialog,
+                    "response",
+                    G_CALLBACK (pdf_progress_response_cb),
+                    pinpoint);
+  pinpoint->pdf_export_dialog = g_object_ref (dialog);
+  pinpoint->pdf_export_progress = GTK_PROGRESS_BAR (progress);
+  pinpoint->pdf_progress_id = g_timeout_add (80,
+                                             update_pdf_progress_cb,
+                                             pinpoint);
+  adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (pinpoint->window));
+}
+
+static void
+clear_pdf_progress (Pinpoint *pinpoint)
+{
+  if (pinpoint->pdf_progress_id != 0)
+    {
+      g_source_remove (pinpoint->pdf_progress_id);
+      pinpoint->pdf_progress_id = 0;
+    }
+  pinpoint->pdf_export_progress = NULL;
+  if (pinpoint->pdf_export_dialog != NULL)
+    {
+      adw_dialog_force_close (ADW_DIALOG (pinpoint->pdf_export_dialog));
+      g_clear_object (&pinpoint->pdf_export_dialog);
+    }
+  g_clear_object (&pinpoint->pdf_export_cancellable);
+}
+
+static void
 pdf_export_finished_cb (GObject      *source,
                         GAsyncResult *result,
                         gpointer      user_data)
@@ -548,8 +770,15 @@ pdf_export_finished_cb (GObject      *source,
 
   (void) source;
   pinpoint->exporting_pdf = FALSE;
+  clear_pdf_progress (pinpoint);
   if (!pp_pdf_export_file_finish (result, &error))
-    show_folder_problem (pinpoint, "Unable to Export PDF", error->message, FALSE);
+    {
+      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        show_folder_problem (pinpoint,
+                             "Unable to Export PDF",
+                             error->message,
+                             FALSE);
+    }
   else
     show_export_success (pinpoint, output);
   g_application_release (G_APPLICATION (pinpoint->application));
@@ -580,13 +809,19 @@ pdf_save_finished_cb (GObject      *source,
     }
 
   g_application_hold (G_APPLICATION (pinpoint->application));
-  pp_pdf_export_file_async (pinpoint->file,
-                            pinpoint->ignore_comments,
-                            output,
-                            &pinpoint->pdf_options,
-                            NULL,
-                            pdf_export_finished_cb,
-                            pinpoint);
+  pinpoint->pdf_export_cancellable = g_cancellable_new ();
+  g_atomic_int_set (&pinpoint->pdf_completed_slides, 0);
+  g_atomic_int_set (&pinpoint->pdf_total_slides, 0);
+  show_pdf_progress (pinpoint);
+  pp_pdf_export_file_async_full (pinpoint->file,
+                                 pinpoint->ignore_comments,
+                                 output,
+                                 &pinpoint->pdf_options,
+                                 pinpoint->pdf_export_cancellable,
+                                 pdf_export_progress_cb,
+                                 pinpoint,
+                                 pdf_export_finished_cb,
+                                 pinpoint);
 }
 
 static void
@@ -1941,6 +2176,9 @@ static void
 pinpoint_clear (Pinpoint *pinpoint)
 {
   set_presenting (pinpoint, FALSE);
+  if (pinpoint->pdf_export_cancellable != NULL)
+    g_cancellable_cancel (pinpoint->pdf_export_cancellable);
+  clear_pdf_progress (pinpoint);
   if (pinpoint->reload_id != 0)
     g_source_remove (pinpoint->reload_id);
   if (pinpoint->hide_cursor_id != 0)
@@ -2018,6 +2256,12 @@ main (int   argc,
 
   g_set_prgname ("pinpoint");
   g_set_application_name ("Pinpoint");
+  pinpoint.sigint_id = g_unix_signal_add (SIGINT,
+                                          termination_sigint_cb,
+                                          &pinpoint);
+  pinpoint.sigterm_id = g_unix_signal_add (SIGTERM,
+                                           termination_sigterm_cb,
+                                           &pinpoint);
   gst_init (&argc, &argv);
 
   option_context = g_option_context_new ("- " PINPOINT_TAGLINE);
@@ -2057,7 +2301,6 @@ main (int   argc,
 
   if (output_filename != NULL)
     {
-      g_autoptr (PpPresentation) presentation = NULL;
       g_autoptr (GFile) output = NULL;
 
       if (pinpoint.file == NULL)
@@ -2067,29 +2310,10 @@ main (int   argc,
           return EXIT_FAILURE;
         }
 
-      presentation = pp_presentation_load_for_pdf (pinpoint.file,
-                                                   pinpoint.ignore_comments,
-                                                   NULL,
-                                                   &error);
-      if (presentation == NULL)
-        {
-          g_printerr ("pinpoint: %s\n", error->message);
-          pinpoint_clear (&pinpoint);
-          return EXIT_FAILURE;
-        }
-
       output = g_file_new_for_commandline_arg (output_filename);
-      if (!pp_pdf_export_with_options (presentation,
-                                       output,
-                                       &pinpoint.pdf_options,
-                                       &error))
-        {
-          g_printerr ("pinpoint: %s\n", error->message);
-          pinpoint_clear (&pinpoint);
-          return EXIT_FAILURE;
-        }
+      status = run_cli_pdf_export (&pinpoint, output);
       pinpoint_clear (&pinpoint);
-      return EXIT_SUCCESS;
+      return status;
     }
 
   pinpoint.application = GTK_APPLICATION (
@@ -2102,12 +2326,6 @@ main (int   argc,
                     "shutdown",
                     G_CALLBACK (application_shutdown_cb),
                     &pinpoint);
-  pinpoint.sigint_id = g_unix_signal_add (SIGINT,
-                                          termination_signal_cb,
-                                          &pinpoint);
-  pinpoint.sigterm_id = g_unix_signal_add (SIGTERM,
-                                           termination_signal_cb,
-                                           &pinpoint);
   status = g_application_run (G_APPLICATION (pinpoint.application), argc, argv);
   pinpoint_clear (&pinpoint);
 

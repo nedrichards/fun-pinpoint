@@ -35,11 +35,13 @@ than one test executable cannot overwrite another executable's results.
 
 ## Enforcement
 
-`tests/coverage-policy.json` is a ratchet, not a claim that the current suite is
-complete. Every production source must have reviewed limits. A run fails when
-the number of uncovered lines, functions, or branches exceeds any recorded
-limit, and a new C file fails until its policy is reviewed. Limits should only
-move down as tests improve.
+`tests/coverage-policy.json` is a reviewed baseline, not a claim that the
+current suite is complete. Every production source must have reviewed limits.
+A run fails when the number of uncovered lines, functions, or branches exceeds
+any recorded limit, and a new C file fails until its policy is reviewed. Limits
+normally move down as tests improve; they may rise when reviewed production
+surface grows across integration boundaries, provided deterministic seams are
+covered independently and the new baseline is recorded explicitly.
 
 Deterministic modules use all three limits. Integration-heavy files currently
 use a line limit because GTK frame scheduling, process startup, portals,

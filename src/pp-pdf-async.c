@@ -8,6 +8,8 @@ typedef struct
   GFile *output;
   gboolean ignore_comments;
   PpPdfOptions options;
+  PpPdfProgressCallback progress_callback;
+  gpointer progress_data;
 } PdfExportJob;
 
 static void
@@ -34,10 +36,13 @@ pdf_export_thread (GTask        *task,
                                                 cancellable,
                                                 &error);
   if (presentation == NULL ||
-      !pp_pdf_export_with_options (presentation,
-                                   job->output,
-                                   &job->options,
-                                   &error))
+      !pp_pdf_export_with_options_full (presentation,
+                                        job->output,
+                                        &job->options,
+                                        cancellable,
+                                        job->progress_callback,
+                                        job->progress_data,
+                                        &error))
     g_task_return_error (task, g_steal_pointer (&error));
   else
     g_task_return_boolean (task, TRUE);
@@ -52,6 +57,28 @@ pp_pdf_export_file_async (GFile               *presentation_file,
                           GAsyncReadyCallback  callback,
                           gpointer             user_data)
 {
+  pp_pdf_export_file_async_full (presentation_file,
+                                 ignore_comments,
+                                 output,
+                                 options,
+                                 cancellable,
+                                 NULL,
+                                 NULL,
+                                 callback,
+                                 user_data);
+}
+
+void
+pp_pdf_export_file_async_full (GFile                *presentation_file,
+                               gboolean              ignore_comments,
+                               GFile                *output,
+                               const PpPdfOptions   *options,
+                               GCancellable         *cancellable,
+                               PpPdfProgressCallback progress_callback,
+                               gpointer              progress_data,
+                               GAsyncReadyCallback   callback,
+                               gpointer              user_data)
+{
   g_autoptr (GTask) task = NULL;
   PdfExportJob *job;
 
@@ -65,7 +92,12 @@ pp_pdf_export_file_async (GFile               *presentation_file,
   job->output = g_object_ref (output);
   job->ignore_comments = ignore_comments;
   job->options = *options;
+  job->progress_callback = progress_callback;
+  job->progress_data = progress_data;
   task = g_task_new (presentation_file, cancellable, callback, user_data);
+  /* The worker owns cancellation through the final atomic replace. Avoid a
+   * late GTask cancellation overriding a successfully committed export. */
+  g_task_set_check_cancellable (task, FALSE);
   g_task_set_task_data (task,
                         job,
                         (GDestroyNotify) pdf_export_job_free);

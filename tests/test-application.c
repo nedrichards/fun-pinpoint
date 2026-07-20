@@ -284,6 +284,63 @@ test_pdf_export (void)
 }
 
 static void
+test_pdf_export_ctrl_c (void)
+{
+  static const char sentinel[] = "existing destination";
+  g_autofree char *directory = g_dir_make_tmp ("pinpoint-pdf-signal-XXXXXX",
+                                               NULL);
+  g_autofree char *presentation = g_build_filename (directory,
+                                                    "long.pin",
+                                                    NULL);
+  g_autofree char *output = g_build_filename (directory,
+                                              "protected.pdf",
+                                              NULL);
+  g_autofree char *output_option = g_strdup_printf ("--output=%s", output);
+  g_autoptr (GString) source = g_string_sized_new (500000);
+  g_autoptr (GError) error = NULL;
+  g_autofree char *contents = NULL;
+  gsize length = 0;
+  const char *arguments[] = {
+    pinpoint_path,
+    output_option,
+    presentation,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = NULL;
+
+  for (guint i = 0; i < 20000; i++)
+    g_string_append_printf (source, "-- [white]\nSlide %u\n", i);
+  g_assert_true (g_file_set_contents (presentation,
+                                      source->str,
+                                      source->len,
+                                      &error));
+  g_assert_no_error (error);
+  g_assert_true (g_file_set_contents (output,
+                                      sentinel,
+                                      strlen (sentinel),
+                                      &error));
+  g_assert_no_error (error);
+
+  process = launch_application (arguments);
+  /* Allow startup to reach the CLI export main loop before delivering SIGINT. */
+  run_loop_for (250);
+  g_assert_true (process_is_running (process));
+  g_subprocess_send_signal (process, SIGINT);
+  g_autofree char *stderr_text = finish_process (process, 128 + SIGINT);
+  g_assert_null (strstr (stderr_text, "pinpoint: "));
+  g_assert_true (g_file_get_contents (output,
+                                      &contents,
+                                      &length,
+                                      &error));
+  g_assert_no_error (error);
+  g_assert_cmpuint (length, ==, strlen (sentinel));
+  g_assert_cmpmem (contents, length, sentinel, strlen (sentinel));
+  g_assert_cmpint (g_remove (presentation), ==, 0);
+  g_assert_cmpint (g_remove (output), ==, 0);
+  g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+static void
 test_subprocess_file_descriptor_stability (void)
 {
   const char *arguments[] = { pinpoint_path, presentation_path, NULL };
@@ -343,6 +400,7 @@ main (int   argc,
   g_test_add_func ("/application/software-renderer-is-rejected",
                    test_software_renderer_is_rejected);
   g_test_add_func ("/application/pdf-export", test_pdf_export);
+  g_test_add_func ("/application/pdf-export-ctrl-c", test_pdf_export_ctrl_c);
   g_test_add_func ("/application/process-fd-stability",
                    test_subprocess_file_descriptor_stability);
   return g_test_run ();

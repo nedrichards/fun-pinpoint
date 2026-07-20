@@ -750,6 +750,91 @@ test_pdf_export (void)
 
 typedef struct
 {
+  GCancellable *cancellable;
+  guint calls;
+  guint completed;
+  guint total;
+} PdfProgressState;
+
+static void
+cancel_pdf_after_first_slide (guint    completed_slides,
+                              guint    total_slides,
+                              gpointer user_data)
+{
+  PdfProgressState *state = user_data;
+
+  state->calls++;
+  state->completed = completed_slides;
+  state->total = total_slides;
+  if (completed_slides == 1)
+    g_cancellable_cancel (state->cancellable);
+}
+
+static void
+test_pdf_export_cancellation (void)
+{
+  static const char source[] =
+    "-- [white]\nFirst\n"
+    "-- [white]\nSecond\n"
+    "-- [white]\nThird\n";
+  static const char sentinel[] = "existing destination";
+  const PpPdfOptions options = PP_PDF_OPTIONS_DEFAULT;
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GCancellable) cancellable = g_cancellable_new ();
+  g_autoptr (GFileIOStream) stream = NULL;
+  g_autoptr (GFile) output = NULL;
+  g_autofree char *contents = NULL;
+  g_autoptr (GError) error = NULL;
+  gsize length = 0;
+  PdfProgressState state = { .cancellable = cancellable };
+
+  presentation = pp_presentation_parse (source, NULL, FALSE, &error);
+  g_assert_no_error (error);
+  output = g_file_new_tmp ("pinpoint-cancelled-pdf-XXXXXX",
+                           &stream,
+                           &error);
+  g_assert_no_error (error);
+  g_assert_true (g_io_stream_close (G_IO_STREAM (stream), NULL, &error));
+  g_assert_no_error (error);
+  g_clear_object (&stream);
+  g_assert_true (g_file_replace_contents (output,
+                                          sentinel,
+                                          strlen (sentinel),
+                                          NULL,
+                                          FALSE,
+                                          G_FILE_CREATE_NONE,
+                                          NULL,
+                                          NULL,
+                                          &error));
+  g_assert_no_error (error);
+
+  g_assert_false (pp_pdf_export_with_options_full (presentation,
+                                                   output,
+                                                   &options,
+                                                   cancellable,
+                                                   cancel_pdf_after_first_slide,
+                                                   &state,
+                                                   &error));
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error (&error);
+  g_assert_cmpuint (state.calls, ==, 2);
+  g_assert_cmpuint (state.completed, ==, 1);
+  g_assert_cmpuint (state.total, ==, 3);
+  g_assert_true (g_file_load_contents (output,
+                                       NULL,
+                                       &contents,
+                                       &length,
+                                       NULL,
+                                       &error));
+  g_assert_no_error (error);
+  g_assert_cmpuint (length, ==, strlen (sentinel));
+  g_assert_cmpmem (contents, length, sentinel, strlen (sentinel));
+  g_assert_true (g_file_delete (output, NULL, &error));
+  g_assert_no_error (error);
+}
+
+typedef struct
+{
   GMainLoop *loop;
   GFile *expected_output;
   gboolean success;
@@ -1160,6 +1245,30 @@ test_video_thumbnail (void)
     pp_video_thumbnail_score (thumbnail, &acceptable);
     g_assert_true (acceptable);
   }
+  g_clear_object (&thumbnail);
+  thumbnail = pp_video_thumbnail_new_for_size (file, 24, 24, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (thumbnail);
+  g_assert_cmpint (gdk_pixbuf_get_width (thumbnail), <=, 24);
+  g_assert_cmpint (gdk_pixbuf_get_height (thumbnail), <=, 24);
+  g_assert_cmpfloat ((double) gdk_pixbuf_get_width (thumbnail) /
+                     gdk_pixbuf_get_height (thumbnail),
+                     >,
+                     1.7);
+  {
+    g_autoptr (GCancellable) cancellable = g_cancellable_new ();
+
+    g_cancellable_cancel (cancellable);
+    g_clear_object (&thumbnail);
+    thumbnail = pp_video_thumbnail_new_for_size (file,
+                                                 24,
+                                                 24,
+                                                 cancellable,
+                                                 &error);
+    g_assert_null (thumbnail);
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+    g_clear_error (&error);
+  }
   g_assert_true (g_file_delete (file, NULL, &error));
   g_assert_no_error (error);
 }
@@ -1510,6 +1619,8 @@ main (int   argc,
   g_test_add_func ("/file-access/bundled-introduction",
                    test_bundled_introduction);
   g_test_add_func ("/render/pdf-export", test_pdf_export);
+  g_test_add_func ("/render/pdf-export-cancellation",
+                   test_pdf_export_cancellation);
   g_test_add_func ("/render/pdf-export-async", test_pdf_export_async);
   g_test_add_func ("/render/pdf-default-stage-color", test_pdf_default_stage_color);
   g_test_add_func ("/render/pdf-options", test_pdf_options);

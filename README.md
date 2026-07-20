@@ -128,6 +128,10 @@ pinpoint --output=talk.pdf --pdf-page-size=a4 \
   --pdf-orientation=landscape --pdf-no-speaker-notes talk.pin
 ```
 
+Interactive exports show per-slide progress and can be cancelled. CLI exports
+show the same progress when standard error is a terminal; Ctrl+C cancels cleanly
+without replacing an existing output file with a partial PDF.
+
 Build the development Flatpak with:
 
 ```sh

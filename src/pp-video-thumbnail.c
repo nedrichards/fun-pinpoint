@@ -11,6 +11,55 @@
 
 #define THUMBNAIL_STATE_TIMEOUT (4 * GST_SECOND)
 #define THUMBNAIL_SAMPLE_TIMEOUT GST_SECOND
+#define THUMBNAIL_CANCEL_POLL (100 * GST_MSECOND)
+
+static GstStateChangeReturn
+wait_for_state (GstElement   *element,
+                GCancellable *cancellable,
+                GError      **error)
+{
+  gint64 deadline = g_get_monotonic_time () +
+                    THUMBNAIL_STATE_TIMEOUT / (GST_SECOND / G_USEC_PER_SEC);
+  GstStateChangeReturn state;
+
+  do
+    {
+      if (cancellable != NULL &&
+          g_cancellable_set_error_if_cancelled (cancellable, error))
+        return GST_STATE_CHANGE_FAILURE;
+      state = gst_element_get_state (element,
+                                     NULL,
+                                     NULL,
+                                     THUMBNAIL_CANCEL_POLL);
+      if (state != GST_STATE_CHANGE_ASYNC)
+        return state;
+    }
+  while (g_get_monotonic_time () < deadline);
+
+  return GST_STATE_CHANGE_ASYNC;
+}
+
+static GstSample *
+pull_preroll (GstAppSink   *sink,
+              GCancellable *cancellable,
+              GError      **error)
+{
+  GstClockTime waited = 0;
+
+  while (waited < THUMBNAIL_SAMPLE_TIMEOUT)
+    {
+      GstSample *sample;
+
+      if (cancellable != NULL &&
+          g_cancellable_set_error_if_cancelled (cancellable, error))
+        return NULL;
+      sample = gst_app_sink_try_pull_preroll (sink, THUMBNAIL_CANCEL_POLL);
+      if (sample != NULL)
+        return sample;
+      waited += THUMBNAIL_CANCEL_POLL;
+    }
+  return NULL;
+}
 
 static double
 pixel_luminance (const guchar *pixel)
@@ -306,6 +355,16 @@ pp_video_thumbnail_new (GFile        *file,
                         GCancellable *cancellable,
                         GError      **error)
 {
+  return pp_video_thumbnail_new_for_size (file, 0, 0, cancellable, error);
+}
+
+GdkPixbuf *
+pp_video_thumbnail_new_for_size (GFile        *file,
+                                 int           max_width,
+                                 int           max_height,
+                                 GCancellable *cancellable,
+                                 GError      **error)
+{
   g_autofree char *uri = NULL;
   GstElement *player = NULL;
   GstElement *video_sink = NULL;
@@ -365,12 +424,10 @@ pp_video_thumbnail_new (GFile        *file,
 
   state = gst_element_set_state (player, GST_STATE_PAUSED);
   if (state == GST_STATE_CHANGE_FAILURE ||
-      gst_element_get_state (player,
-                             NULL,
-                             NULL,
-                             THUMBNAIL_STATE_TIMEOUT) == GST_STATE_CHANGE_FAILURE)
+      wait_for_state (player, cancellable, error) == GST_STATE_CHANGE_FAILURE)
     {
-      set_pipeline_error (player, error, "Unable to decode the video");
+      if (error == NULL || *error == NULL)
+        set_pipeline_error (player, error, "Unable to decode the video");
       goto out;
     }
 
@@ -397,10 +454,15 @@ pp_video_thumbnail_new (GFile        *file,
                                         GST_SEEK_FLAG_ACCURATE,
                                         position))
             continue;
-          sample = gst_app_sink_try_pull_preroll (GST_APP_SINK (video_sink),
-                                                  THUMBNAIL_SAMPLE_TIMEOUT);
+          sample = pull_preroll (GST_APP_SINK (video_sink),
+                                 cancellable,
+                                 error);
           if (sample == NULL)
-            continue;
+            {
+              if (error != NULL && *error != NULL)
+                goto out;
+              continue;
+            }
           if (!score_sample (sample, &score, &acceptable))
             {
               gst_sample_unref (sample);
@@ -438,17 +500,34 @@ pp_video_thumbnail_new (GFile        *file,
       if (cancellable != NULL &&
           g_cancellable_set_error_if_cancelled (cancellable, error))
         goto out;
-      sample = gst_app_sink_try_pull_preroll (GST_APP_SINK (video_sink),
-                                              THUMBNAIL_SAMPLE_TIMEOUT);
+      sample = pull_preroll (GST_APP_SINK (video_sink), cancellable, error);
       if (sample == NULL)
         {
-          set_pipeline_error (player,
-                              error,
-                              "Timed out while decoding a video thumbnail");
+          if (error == NULL || *error == NULL)
+            set_pipeline_error (player,
+                                error,
+                                "Timed out while decoding a video thumbnail");
           goto out;
         }
       pixbuf = pixbuf_from_sample (sample, error);
       gst_sample_unref (sample);
+    }
+
+  if (pixbuf != NULL && max_width > 0 && max_height > 0 &&
+      (gdk_pixbuf_get_width (pixbuf) > max_width ||
+       gdk_pixbuf_get_height (pixbuf) > max_height))
+    {
+      double scale = MIN ((double) max_width / gdk_pixbuf_get_width (pixbuf),
+                          (double) max_height / gdk_pixbuf_get_height (pixbuf));
+      int width = MAX (1, (int) floor (gdk_pixbuf_get_width (pixbuf) * scale));
+      int height = MAX (1, (int) floor (gdk_pixbuf_get_height (pixbuf) * scale));
+      GdkPixbuf *scaled = gdk_pixbuf_scale_simple (pixbuf,
+                                                   width,
+                                                   height,
+                                                   GDK_INTERP_BILINEAR);
+
+      g_clear_object (&pixbuf);
+      pixbuf = scaled;
     }
 
 out:

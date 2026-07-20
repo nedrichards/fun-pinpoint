@@ -6,24 +6,40 @@
 #include "pp-video-thumbnail.h"
 
 #include <cairo-pdf.h>
+#include <errno.h>
 #include <gdk/gdk.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <librsvg/rsvg.h>
 #include <pango/pangocairo.h>
+#include <fcntl.h>
+#include <math.h>
+#include <unistd.h>
 
 #define A4_WIDTH 595.275590551
 #define A4_HEIGHT 841.88976378
 #define LETTER_WIDTH 612.0
 #define LETTER_HEIGHT 792.0
+#define PDF_RASTER_PIXELS_PER_POINT 2.0
+
+typedef struct
+{
+  cairo_surface_t *surface;
+  double intrinsic_width;
+  double intrinsic_height;
+} PdfRaster;
 
 typedef struct
 {
   const PpPresentation *presentation;
   cairo_surface_t *surface;
   cairo_t *cr;
-  GHashTable *images;
+  char *raster_uri;
+  PdfRaster raster;
   GHashTable *svgs;
   GHashTable *failed_videos;
+  GCancellable *cancellable;
+  PpPdfProgressCallback progress_callback;
+  gpointer progress_data;
   double page_width;
   double page_height;
   double margin;
@@ -32,9 +48,22 @@ typedef struct
 static cairo_user_data_key_t pixel_data_key;
 
 static void
-destroy_surface (gpointer data)
+propagate_or_clear_error (GError  **destination,
+                          GError   *error)
 {
-  cairo_surface_destroy (data);
+  if (destination != NULL)
+    g_propagate_error (destination, error);
+  else
+    g_error_free (error);
+}
+
+static void
+clear_raster (PdfRenderer *renderer)
+{
+  g_clear_pointer (&renderer->raster_uri, g_free);
+  g_clear_pointer (&renderer->raster.surface, cairo_surface_destroy);
+  renderer->raster.intrinsic_width = 0;
+  renderer->raster.intrinsic_height = 0;
 }
 
 static cairo_surface_t *
@@ -150,40 +179,62 @@ surface_from_pixbuf (GdkPixbuf  *pixbuf,
   return surface;
 }
 
-static cairo_surface_t *
+static PdfRaster *
 get_image (PdfRenderer *renderer,
-           GFile       *file)
+           GFile       *file,
+           GError     **error)
 {
   g_autofree char *uri = g_file_get_uri (file);
   g_autofree char *path = NULL;
+  g_autoptr (GFileInputStream) stream = NULL;
   g_autoptr (GdkPixbuf) pixbuf = NULL;
-  g_autoptr (GError) error = NULL;
-  cairo_surface_t *surface = g_hash_table_lookup (renderer->images, uri);
+  g_autoptr (GError) local_error = NULL;
+  cairo_surface_t *surface;
+  int intrinsic_width = 0;
+  int intrinsic_height = 0;
+  int max_width = (int) ceil (renderer->page_width * PDF_RASTER_PIXELS_PER_POINT);
+  int max_height = (int) ceil (renderer->page_height * PDF_RASTER_PIXELS_PER_POINT);
 
-  if (surface != NULL)
-    return surface;
+  if (g_strcmp0 (renderer->raster_uri, uri) == 0)
+    return &renderer->raster;
 
   path = g_file_get_path (file);
   if (path == NULL)
     return NULL;
-  pixbuf = gdk_pixbuf_new_from_file (path, &error);
+  gdk_pixbuf_get_file_info (path, &intrinsic_width, &intrinsic_height);
+  stream = g_file_read (file, renderer->cancellable, &local_error);
+  if (stream != NULL)
+    pixbuf = gdk_pixbuf_new_from_stream_at_scale (G_INPUT_STREAM (stream),
+                                                  max_width,
+                                                  max_height,
+                                                  TRUE,
+                                                  renderer->cancellable,
+                                                  &local_error);
   if (pixbuf == NULL)
     {
-      g_warning ("Unable to load PDF background: %s", error->message);
+      if (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        propagate_or_clear_error (error, g_steal_pointer (&local_error));
+      else
+        g_warning ("Unable to load PDF background: %s", local_error->message);
       return NULL;
     }
 
-  surface = surface_from_pixbuf (pixbuf, &error);
+  surface = surface_from_pixbuf (pixbuf, &local_error);
   if (surface == NULL)
     {
-      g_warning ("Unable to prepare PDF background pixels: %s", error->message);
+      g_warning ("Unable to prepare PDF background pixels: %s", local_error->message);
       return NULL;
     }
 
-  if (g_str_has_suffix (path, ".jpg") || g_str_has_suffix (path, ".jpeg"))
+  if (intrinsic_width == gdk_pixbuf_get_width (pixbuf) &&
+      intrinsic_height == gdk_pixbuf_get_height (pixbuf) &&
+      (g_str_has_suffix (path, ".jpg") || g_str_has_suffix (path, ".jpeg")))
     {
       g_autoptr (GError) bytes_error = NULL;
-      GBytes *bytes = g_file_load_bytes (file, NULL, NULL, &bytes_error);
+      GBytes *bytes = g_file_load_bytes (file,
+                                         renderer->cancellable,
+                                         NULL,
+                                         &bytes_error);
 
       if (bytes != NULL)
         {
@@ -200,17 +251,32 @@ get_image (PdfRenderer *renderer,
           if (mime_status != CAIRO_STATUS_SUCCESS)
             g_bytes_unref (bytes);
         }
+      else if (g_error_matches (bytes_error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        {
+          cairo_surface_destroy (surface);
+          propagate_or_clear_error (error, g_steal_pointer (&bytes_error));
+          return NULL;
+        }
     }
-  g_hash_table_insert (renderer->images, g_steal_pointer (&uri), surface);
-  return surface;
+  clear_raster (renderer);
+  renderer->raster_uri = g_steal_pointer (&uri);
+  renderer->raster.surface = surface;
+  renderer->raster.intrinsic_width = intrinsic_width > 0
+    ? intrinsic_width
+    : gdk_pixbuf_get_width (pixbuf);
+  renderer->raster.intrinsic_height = intrinsic_height > 0
+    ? intrinsic_height
+    : gdk_pixbuf_get_height (pixbuf);
+  return &renderer->raster;
 }
 
 static RsvgHandle *
 get_svg (PdfRenderer *renderer,
-         GFile       *file)
+         GFile       *file,
+         GError     **error)
 {
   g_autofree char *uri = g_file_get_uri (file);
-  g_autoptr (GError) error = NULL;
+  g_autoptr (GError) local_error = NULL;
   RsvgHandle *handle = g_hash_table_lookup (renderer->svgs, uri);
 
   if (handle != NULL)
@@ -218,11 +284,14 @@ get_svg (PdfRenderer *renderer,
 
   handle = rsvg_handle_new_from_gfile_sync (file,
                                             RSVG_HANDLE_FLAGS_NONE,
-                                            NULL,
-                                            &error);
+                                            renderer->cancellable,
+                                            &local_error);
   if (handle == NULL)
     {
-      g_warning ("Unable to load SVG background: %s", error->message);
+      if (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        propagate_or_clear_error (error, g_steal_pointer (&local_error));
+      else
+        g_warning ("Unable to load SVG background: %s", local_error->message);
       return NULL;
     }
 
@@ -230,37 +299,53 @@ get_svg (PdfRenderer *renderer,
   return handle;
 }
 
-static cairo_surface_t *
+static PdfRaster *
 get_video_thumbnail (PdfRenderer *renderer,
-                     GFile       *file)
+                     GFile       *file,
+                     GError     **error)
 {
   g_autofree char *uri = g_file_get_uri (file);
   g_autoptr (GdkPixbuf) pixbuf = NULL;
-  g_autoptr (GError) error = NULL;
-  cairo_surface_t *surface = g_hash_table_lookup (renderer->images, uri);
+  g_autoptr (GError) local_error = NULL;
+  cairo_surface_t *surface;
+  int max_width = (int) ceil (renderer->page_width * PDF_RASTER_PIXELS_PER_POINT);
+  int max_height = (int) ceil (renderer->page_height * PDF_RASTER_PIXELS_PER_POINT);
 
-  if (surface != NULL)
-    return surface;
+  if (g_strcmp0 (renderer->raster_uri, uri) == 0)
+    return &renderer->raster;
   if (g_hash_table_contains (renderer->failed_videos, uri))
     return NULL;
 
-  pixbuf = pp_video_thumbnail_new (file, NULL, &error);
+  pixbuf = pp_video_thumbnail_new_for_size (file,
+                                            max_width,
+                                            max_height,
+                                            renderer->cancellable,
+                                            &local_error);
   if (pixbuf == NULL)
     {
-      g_warning ("Unable to create PDF video thumbnail: %s", error->message);
+      if (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        {
+          propagate_or_clear_error (error, g_steal_pointer (&local_error));
+          return NULL;
+        }
+      g_warning ("Unable to create PDF video thumbnail: %s", local_error->message);
       g_hash_table_add (renderer->failed_videos, g_steal_pointer (&uri));
       return NULL;
     }
 
-  surface = surface_from_pixbuf (pixbuf, &error);
+  surface = surface_from_pixbuf (pixbuf, &local_error);
   if (surface == NULL)
     {
-      g_warning ("Unable to prepare PDF video pixels: %s", error->message);
+      g_warning ("Unable to prepare PDF video pixels: %s", local_error->message);
       g_hash_table_add (renderer->failed_videos, g_steal_pointer (&uri));
       return NULL;
     }
-  g_hash_table_insert (renderer->images, g_steal_pointer (&uri), surface);
-  return surface;
+  clear_raster (renderer);
+  renderer->raster_uri = g_steal_pointer (&uri);
+  renderer->raster.surface = surface;
+  renderer->raster.intrinsic_width = gdk_pixbuf_get_width (pixbuf);
+  renderer->raster.intrinsic_height = gdk_pixbuf_get_height (pixbuf);
+  return &renderer->raster;
 }
 
 static GdkRGBA
@@ -282,19 +367,19 @@ set_source_color (cairo_t       *cr,
 }
 
 static void
-render_surface_background (PdfRenderer    *renderer,
-                           const PpSlide  *slide,
-                           cairo_surface_t *surface)
+render_surface_background (PdfRenderer   *renderer,
+                           const PpSlide *slide,
+                           PdfRaster     *raster)
 {
   PpRect rect;
-  double surface_width = cairo_image_surface_get_width (surface);
-  double surface_height = cairo_image_surface_get_height (surface);
+  double surface_width = cairo_image_surface_get_width (raster->surface);
+  double surface_height = cairo_image_surface_get_height (raster->surface);
 
   pp_render_get_background_rect (slide,
                                  renderer->page_width,
                                  renderer->page_height,
-                                 surface_width,
-                                 surface_height,
+                                 raster->intrinsic_width,
+                                 raster->intrinsic_height,
                                  &rect);
   cairo_save (renderer->cr);
   cairo_rectangle (renderer->cr,
@@ -307,14 +392,15 @@ render_surface_background (PdfRenderer    *renderer,
   cairo_scale (renderer->cr,
                rect.width / surface_width,
                rect.height / surface_height);
-  cairo_set_source_surface (renderer->cr, surface, 0, 0);
+  cairo_set_source_surface (renderer->cr, raster->surface, 0, 0);
   cairo_paint (renderer->cr);
   cairo_restore (renderer->cr);
 }
 
-static void
+static gboolean
 render_background (PdfRenderer  *renderer,
-                   const PpSlide *slide)
+                   const PpSlide *slide,
+                   GError       **error)
 {
   static const GdkRGBA white = { 1, 1, 1, 1 };
   GdkRGBA stage_color = parse_color (slide->stage_color, &white);
@@ -332,20 +418,22 @@ render_background (PdfRenderer  *renderer,
     {
       g_autoptr (GFile) file = pp_render_resolve_asset (renderer->presentation,
                                                         slide->background);
-      cairo_surface_t *image = get_image (renderer, file);
+      PdfRaster *image = get_image (renderer, file, error);
 
       if (image != NULL)
         render_surface_background (renderer, slide, image);
+      else if (error != NULL && *error != NULL)
+        return FALSE;
     }
   else if (slide->background_type == PP_BACKGROUND_SVG)
     {
       g_autoptr (GFile) file = pp_render_resolve_asset (renderer->presentation,
                                                         slide->background);
-      RsvgHandle *svg = get_svg (renderer, file);
+      RsvgHandle *svg = get_svg (renderer, file, error);
 
       if (svg != NULL)
         {
-          g_autoptr (GError) error = NULL;
+          g_autoptr (GError) render_error = NULL;
           double intrinsic_width = 0;
           double intrinsic_height = 0;
           PpRect rect;
@@ -365,19 +453,28 @@ render_background (PdfRenderer  *renderer,
                                          intrinsic_height,
                                          &rect);
           viewport = (RsvgRectangle) { rect.x, rect.y, rect.width, rect.height };
-          if (!rsvg_handle_render_document (svg, renderer->cr, &viewport, &error))
-            g_warning ("Unable to render SVG background: %s", error->message);
+          if (!rsvg_handle_render_document (svg,
+                                            renderer->cr,
+                                            &viewport,
+                                            &render_error))
+            g_warning ("Unable to render SVG background: %s",
+                       render_error->message);
         }
+      else if (error != NULL && *error != NULL)
+        return FALSE;
     }
   else if (slide->background_type == PP_BACKGROUND_VIDEO)
     {
       g_autoptr (GFile) file = pp_render_resolve_asset (renderer->presentation,
                                                         slide->background);
-      cairo_surface_t *thumbnail = get_video_thumbnail (renderer, file);
+      PdfRaster *thumbnail = get_video_thumbnail (renderer, file, error);
 
       if (thumbnail != NULL)
         render_surface_background (renderer, slide, thumbnail);
+      else if (error != NULL && *error != NULL)
+        return FALSE;
     }
+  return TRUE;
 }
 
 static PangoAlignment
@@ -476,18 +573,35 @@ render_notes (PdfRenderer  *renderer,
 }
 
 gboolean
-pp_pdf_export_with_options (const PpPresentation *presentation,
-                            GFile                *output,
-                            const PpPdfOptions   *options,
-                            GError              **error)
+pp_pdf_export_with_options_full (const PpPresentation *presentation,
+                                 GFile                *output,
+                                 const PpPdfOptions   *options,
+                                 GCancellable         *cancellable,
+                                 PpPdfProgressCallback progress_callback,
+                                 gpointer              progress_data,
+                                 GError              **error)
 {
   g_autofree char *path = NULL;
+  g_autofree char *directory = NULL;
+  g_autofree char *temporary_path = NULL;
+  g_autoptr (GFile) parent = NULL;
+  g_autoptr (GFile) temporary = NULL;
   PdfRenderer renderer = { 0 };
   cairo_status_t status;
+  guint n_slides;
+  int temporary_fd;
+  gboolean success = FALSE;
+  gboolean render_complete = FALSE;
 
   g_return_val_if_fail (presentation != NULL, FALSE);
   g_return_val_if_fail (G_IS_FILE (output), FALSE);
   g_return_val_if_fail (options != NULL, FALSE);
+  g_return_val_if_fail (cancellable == NULL || G_IS_CANCELLABLE (cancellable),
+                        FALSE);
+
+  if (cancellable != NULL &&
+      g_cancellable_set_error_if_cancelled (cancellable, error))
+    return FALSE;
 
   path = g_file_get_path (output);
   if (path == NULL)
@@ -499,11 +613,35 @@ pp_pdf_export_with_options (const PpPresentation *presentation,
       return FALSE;
     }
 
+  parent = g_file_get_parent (output);
+  directory = parent != NULL ? g_file_get_path (parent) : NULL;
+  if (directory == NULL)
+    {
+      g_set_error_literal (error,
+                           G_IO_ERROR,
+                           G_IO_ERROR_NOT_SUPPORTED,
+                           "PDF output must have a local parent folder");
+      return FALSE;
+    }
+  temporary_path = g_build_filename (directory,
+                                     ".pinpoint-pdf-XXXXXX",
+                                     NULL);
+  temporary_fd = g_mkstemp_full (temporary_path, O_RDWR | O_CLOEXEC, 0666);
+  if (temporary_fd < 0)
+    {
+      int saved_errno = errno;
+
+      g_set_error (error,
+                   G_IO_ERROR,
+                   g_io_error_from_errno (saved_errno),
+                   "Unable to create temporary PDF: %s",
+                   g_strerror (saved_errno));
+      return FALSE;
+    }
+  close (temporary_fd);
+  temporary = g_file_new_for_path (temporary_path);
+
   renderer.presentation = presentation;
-  renderer.images = g_hash_table_new_full (g_str_hash,
-                                            g_str_equal,
-                                            g_free,
-                                            destroy_surface);
   renderer.svgs = g_hash_table_new_full (g_str_hash,
                                          g_str_equal,
                                          g_free,
@@ -512,34 +650,53 @@ pp_pdf_export_with_options (const PpPresentation *presentation,
                                                    g_str_equal,
                                                    g_free,
                                                    NULL);
+  renderer.cancellable = cancellable;
+  renderer.progress_callback = progress_callback;
+  renderer.progress_data = progress_data;
   pp_pdf_options_get_page_dimensions (options,
                                       &renderer.page_width,
                                       &renderer.page_height);
   renderer.margin = renderer.page_width * 0.05;
-  renderer.surface = cairo_pdf_surface_create (path,
+  renderer.surface = cairo_pdf_surface_create (temporary_path,
                                                 renderer.page_width,
                                                 renderer.page_height);
   renderer.cr = cairo_create (renderer.surface);
+  n_slides = pp_presentation_get_n_slides (presentation);
+  if (progress_callback != NULL)
+    progress_callback (0, n_slides, progress_data);
 
-  for (guint i = 0; i < pp_presentation_get_n_slides (presentation); i++)
+  for (guint i = 0; i < n_slides; i++)
     {
       const PpSlide *slide = pp_presentation_get_slide (presentation, i);
 
-      render_background (&renderer, slide);
+      if ((cancellable != NULL &&
+           g_cancellable_set_error_if_cancelled (cancellable, error)) ||
+          !render_background (&renderer, slide, error))
+        goto out;
       render_text (&renderer, slide);
       cairo_show_page (renderer.cr);
       if (options->include_speaker_notes && slide->speaker_notes != NULL)
         render_notes (&renderer, slide);
+      if (progress_callback != NULL)
+        progress_callback (i + 1, n_slides, progress_data);
     }
 
+  if (cancellable != NULL &&
+      g_cancellable_set_error_if_cancelled (cancellable, error))
+    goto out;
+  render_complete = TRUE;
+
+out:
   cairo_destroy (renderer.cr);
   cairo_surface_finish (renderer.surface);
   status = cairo_surface_status (renderer.surface);
   cairo_surface_destroy (renderer.surface);
-  g_hash_table_unref (renderer.images);
+  clear_raster (&renderer);
   g_hash_table_unref (renderer.svgs);
   g_hash_table_unref (renderer.failed_videos);
 
+  if (!render_complete || (error != NULL && *error != NULL))
+    goto cleanup;
   if (status != CAIRO_STATUS_SUCCESS)
     {
       g_set_error (error,
@@ -547,10 +704,38 @@ pp_pdf_export_with_options (const PpPresentation *presentation,
                    G_IO_ERROR_FAILED,
                    "Unable to write PDF: %s",
                    cairo_status_to_string (status));
-      return FALSE;
+      goto cleanup;
     }
 
-  return TRUE;
+  if (!g_file_move (temporary,
+                    output,
+                    G_FILE_COPY_OVERWRITE,
+                    cancellable,
+                    NULL,
+                    NULL,
+                    error))
+    goto cleanup;
+  success = TRUE;
+
+cleanup:
+  if (!success)
+    g_file_delete (temporary, NULL, NULL);
+  return success;
+}
+
+gboolean
+pp_pdf_export_with_options (const PpPresentation *presentation,
+                            GFile                *output,
+                            const PpPdfOptions   *options,
+                            GError              **error)
+{
+  return pp_pdf_export_with_options_full (presentation,
+                                          output,
+                                          options,
+                                          NULL,
+                                          NULL,
+                                          NULL,
+                                          error);
 }
 
 void
