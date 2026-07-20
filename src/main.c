@@ -47,6 +47,8 @@ typedef struct
   GFileMonitor *monitor;
   PpAssetMonitors *asset_monitors;
   guint reload_id;
+  guint monitor_poll_id;
+  char *monitor_revision;
   guint hide_cursor_id;
   guint sigint_id;
   guint sigterm_id;
@@ -83,6 +85,19 @@ static void set_presenting (Pinpoint *pinpoint,
                             gboolean  presenting);
 static void open_presentation_folder_dialog (Pinpoint *pinpoint);
 static void start_monitor (Pinpoint *pinpoint);
+
+static void
+clear_source_id (guint *source_id)
+{
+  GSource *source;
+
+  if (*source_id == 0)
+    return;
+  source = g_main_context_find_source_by_id (NULL, *source_id);
+  *source_id = 0;
+  if (source != NULL)
+    g_source_destroy (source);
+}
 
 static gboolean
 termination_signal_cb (Pinpoint *pinpoint,
@@ -465,6 +480,13 @@ reload_cb (gpointer user_data)
 }
 
 static void
+schedule_reload (Pinpoint *pinpoint)
+{
+  clear_source_id (&pinpoint->reload_id);
+  pinpoint->reload_id = g_timeout_add (200, reload_cb, pinpoint);
+}
+
+static void
 file_changed_cb (GFileMonitor      *monitor,
                  GFile             *file,
                  GFile             *other_file,
@@ -474,13 +496,63 @@ file_changed_cb (GFileMonitor      *monitor,
   Pinpoint *pinpoint = user_data;
 
   (void) monitor;
-  (void) file;
-  (void) other_file;
   (void) event_type;
 
-  if (pinpoint->reload_id != 0)
-    g_source_remove (pinpoint->reload_id);
-  pinpoint->reload_id = g_timeout_add (200, reload_cb, pinpoint);
+  if (!g_file_equal (file, pinpoint->file) &&
+      (other_file == NULL || !g_file_equal (other_file, pinpoint->file)))
+    return;
+
+  schedule_reload (pinpoint);
+}
+
+static char *
+query_file_revision (GFile *file)
+{
+  g_autoptr (GFileInfo) info = NULL;
+  const char *etag;
+
+  info = g_file_query_info (file,
+                            G_FILE_ATTRIBUTE_ETAG_VALUE ","
+                            G_FILE_ATTRIBUTE_TIME_MODIFIED ","
+                            G_FILE_ATTRIBUTE_TIME_MODIFIED_USEC ","
+                            G_FILE_ATTRIBUTE_STANDARD_SIZE,
+                            G_FILE_QUERY_INFO_NONE,
+                            NULL,
+                            NULL);
+  if (info == NULL)
+    return NULL;
+  etag = g_file_info_get_attribute_string (info,
+                                            G_FILE_ATTRIBUTE_ETAG_VALUE);
+  return g_strdup_printf ("%s:%" G_GUINT64_FORMAT ":%u:%" G_GOFFSET_FORMAT,
+                          etag != NULL ? etag : "",
+                          g_file_info_get_attribute_uint64 (
+                            info, G_FILE_ATTRIBUTE_TIME_MODIFIED),
+                          g_file_info_get_attribute_uint32 (
+                            info, G_FILE_ATTRIBUTE_TIME_MODIFIED_USEC),
+                          g_file_info_get_size (info));
+}
+
+static gboolean
+file_uses_document_portal (GFile *file)
+{
+  g_autoptr (GFile) portal_root = g_file_new_build_filename (
+    g_get_user_runtime_dir (), "doc", NULL);
+
+  return g_file_has_prefix (file, portal_root);
+}
+
+static gboolean
+poll_file_cb (gpointer user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  g_autofree char *revision = query_file_revision (pinpoint->file);
+
+  if (revision == NULL || g_strcmp0 (revision, pinpoint->monitor_revision) == 0)
+    return G_SOURCE_CONTINUE;
+  g_free (pinpoint->monitor_revision);
+  pinpoint->monitor_revision = g_steal_pointer (&revision);
+  schedule_reload (pinpoint);
+  return G_SOURCE_CONTINUE;
 }
 
 static void
@@ -498,9 +570,12 @@ static void
 start_monitor (Pinpoint *pinpoint)
 {
   g_autoptr (GError) error = NULL;
+  g_autoptr (GFile) parent = NULL;
   const PpPresentation *presentation;
 
   g_clear_object (&pinpoint->monitor);
+  clear_source_id (&pinpoint->monitor_poll_id);
+  g_clear_pointer (&pinpoint->monitor_revision, g_free);
   g_clear_pointer (&pinpoint->asset_monitors, pp_asset_monitors_free);
   presentation = pp_stage_get_presentation (pinpoint->stage);
   if (presentation != NULL && !pinpoint->bundled_read_only)
@@ -510,16 +585,33 @@ start_monitor (Pinpoint *pinpoint)
   if (pinpoint->file == NULL || pinpoint->bundled_read_only)
     return;
 
-  pinpoint->monitor = g_file_monitor_file (pinpoint->file,
-                                           G_FILE_MONITOR_NONE,
-                                           NULL,
-                                           &error);
+  if (file_uses_document_portal (pinpoint->file))
+    {
+      pinpoint->monitor_revision = query_file_revision (pinpoint->file);
+      pinpoint->monitor_poll_id = g_timeout_add (500,
+                                                 poll_file_cb,
+                                                 pinpoint);
+    }
+
+  parent = g_file_get_parent (pinpoint->file);
+  if (parent != NULL)
+    pinpoint->monitor = g_file_monitor_directory (
+      parent,
+      G_FILE_MONITOR_WATCH_MOVES,
+      NULL,
+      &error);
+  else
+    pinpoint->monitor = g_file_monitor_file (pinpoint->file,
+                                             G_FILE_MONITOR_NONE,
+                                             NULL,
+                                             &error);
   if (pinpoint->monitor == NULL)
     {
       g_warning ("Unable to monitor presentation: %s", error->message);
       return;
     }
 
+  g_file_monitor_set_rate_limit (pinpoint->monitor, 100);
   g_signal_connect (pinpoint->monitor,
                     "changed",
                     G_CALLBACK (file_changed_cb),
@@ -747,11 +839,7 @@ show_pdf_progress (Pinpoint *pinpoint)
 static void
 clear_pdf_progress (Pinpoint *pinpoint)
 {
-  if (pinpoint->pdf_progress_id != 0)
-    {
-      g_source_remove (pinpoint->pdf_progress_id);
-      pinpoint->pdf_progress_id = 0;
-    }
+  clear_source_id (&pinpoint->pdf_progress_id);
   pinpoint->pdf_export_progress = NULL;
   if (pinpoint->pdf_export_dialog != NULL)
     {
@@ -2034,8 +2122,7 @@ motion_cb (GtkEventControllerMotion *controller,
   (void) x;
   (void) y;
 
-  if (pinpoint->hide_cursor_id != 0)
-    g_source_remove (pinpoint->hide_cursor_id);
+  clear_source_id (&pinpoint->hide_cursor_id);
   gtk_widget_set_cursor_from_name (GTK_WIDGET (pinpoint->stage), "default");
   pinpoint->hide_cursor_id = g_timeout_add (500, hide_cursor_cb, pinpoint);
 }
@@ -2047,11 +2134,7 @@ motion_leave_cb (GtkEventControllerMotion *controller,
   Pinpoint *pinpoint = user_data;
 
   (void) controller;
-  if (pinpoint->hide_cursor_id != 0)
-    {
-      g_source_remove (pinpoint->hide_cursor_id);
-      pinpoint->hide_cursor_id = 0;
-    }
+  clear_source_id (&pinpoint->hide_cursor_id);
   gtk_widget_set_cursor_from_name (GTK_WIDGET (pinpoint->stage), "default");
 }
 
@@ -2199,21 +2282,13 @@ pinpoint_clear (Pinpoint *pinpoint)
   if (pinpoint->pdf_export_cancellable != NULL)
     g_cancellable_cancel (pinpoint->pdf_export_cancellable);
   clear_pdf_progress (pinpoint);
-  if (pinpoint->reload_id != 0)
-    g_source_remove (pinpoint->reload_id);
-  if (pinpoint->hide_cursor_id != 0)
-    g_source_remove (pinpoint->hide_cursor_id);
-  if (pinpoint->sigint_id != 0)
-    {
-      g_source_remove (pinpoint->sigint_id);
-      pinpoint->sigint_id = 0;
-    }
-  if (pinpoint->sigterm_id != 0)
-    {
-      g_source_remove (pinpoint->sigterm_id);
-      pinpoint->sigterm_id = 0;
-    }
+  clear_source_id (&pinpoint->reload_id);
+  clear_source_id (&pinpoint->monitor_poll_id);
+  clear_source_id (&pinpoint->hide_cursor_id);
+  clear_source_id (&pinpoint->sigint_id);
+  clear_source_id (&pinpoint->sigterm_id);
   g_clear_object (&pinpoint->monitor);
+  g_clear_pointer (&pinpoint->monitor_revision, g_free);
   g_clear_pointer (&pinpoint->asset_monitors, pp_asset_monitors_free);
   g_clear_object (&pinpoint->file);
   g_clear_object (&pinpoint->presentation_folder);

@@ -4,7 +4,11 @@ Pinpoint presentations remain ordinary UTF-8 text files. Pinpoint monitors the
 open `.pin` file, waits briefly for an editor to finish saving, then reloads the
 presentation at the first slide whose source changed. The editor and presenter
 can therefore stay open side by side without an editor becoming part of the
-presentation runtime.
+presentation runtime. Monitoring follows the presentation's directory so live
+reload also survives editors that save safely by atomically replacing the
+original file. When a sandboxed presentation is reached through the document
+portal, where host-side file events are not forwarded reliably, Pinpoint checks
+the file's revision twice a second instead.
 
 ## GtkSourceView 5 highlighting
 

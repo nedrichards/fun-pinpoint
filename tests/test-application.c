@@ -393,7 +393,14 @@ test_reload_then_shutdown (void)
   g_autofree char *path = g_build_filename (directory, "reload.pin", NULL);
   g_autofree char *asset_path = g_build_filename (directory, "asset.svg", NULL);
   const char *arguments[] = { pinpoint_path, path, NULL };
+  g_autoptr (GDBusConnection) connection = g_bus_get_sync (
+    G_BUS_TYPE_SESSION,
+    NULL,
+    NULL);
+  g_autoptr (GHashTable) ignored = list_bus_names (connection);
   g_autoptr (GSubprocess) process = NULL;
+  g_autoptr (GFile) presentation_file = g_file_new_for_path (path);
+  g_autofree char *mpris_name = NULL;
   g_autoptr (GError) error = NULL;
 
   g_assert_true (g_file_set_contents (path,
@@ -409,8 +416,9 @@ test_reload_then_shutdown (void)
     &error));
   g_assert_no_error (error);
   process = launch_application (arguments);
-  run_loop_for (500);
-  g_assert_true (process_is_running (process));
+  mpris_name = wait_for_new_mpris_name (connection, ignored);
+  g_assert_nonnull (mpris_name);
+  wait_for_mpris_title (connection, mpris_name, "Slide 1 of 1");
   g_assert_true (g_file_set_contents (
     asset_path,
     "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'>"
@@ -419,12 +427,18 @@ test_reload_then_shutdown (void)
     &error));
   g_assert_no_error (error);
   run_loop_for (300);
-  g_assert_true (g_file_set_contents (path,
-                                      "-- [white]\nSecond\n",
-                                      -1,
-                                      &error));
+  g_assert_true (g_file_replace_contents (
+    presentation_file,
+    "-- [white]\nFirst\n--\nSecond\n",
+    strlen ("-- [white]\nFirst\n--\nSecond\n"),
+    NULL,
+    FALSE,
+    G_FILE_CREATE_NONE,
+    NULL,
+    NULL,
+    &error));
   g_assert_no_error (error);
-  run_loop_for (500);
+  wait_for_mpris_title (connection, mpris_name, "Slide 1 of 2");
   g_subprocess_send_signal (process, SIGTERM);
   g_autofree char *stderr_text = finish_process (process, EXIT_SUCCESS);
   g_assert_null (strstr (stderr_text, "pinpoint:"));
@@ -594,6 +608,7 @@ int
 main (int   argc,
       char *argv[])
 {
+  g_test_init (&argc, &argv, NULL);
   if (argc != 4)
     return EXIT_FAILURE;
   pinpoint_path = argv[1];
@@ -601,8 +616,6 @@ main (int   argc,
   media_presentation_path = argv[3];
   if (!gtk_init_check ())
     return 77;
-
-  g_test_init (&argc, &argv, NULL);
   g_test_add_func ("/application/fullscreen-speaker-shutdown",
                    test_fullscreen_speaker_shutdown);
   g_test_add_func ("/application/mpris-multi-instance-control",
