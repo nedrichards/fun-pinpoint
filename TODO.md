@@ -34,11 +34,17 @@ belongs here.
   explicit lifecycle, revocation, and Flatpak permissions before granting
   network access. `varlink-glib` also needs a dependency recheck because the
   GNOME 50 SDK currently has libdex 1.1 while the alpha requires 1.2.
-- [ ] Finish PDF export memory bounds and cancellation. The interactive path is
-  now asynchronous and thumbnail candidates are scored in mapped GStreamer
-  buffers, but the UI should expose cancellation, negotiate or scale the winner
-  to an explicit export-quality bound, and release or bound decoded image
-  surfaces instead of retaining the entire deck.
+- [ ] Investigate building a custom android remote app, it would need to work
+  with wear os on a pixel watch 2 and android on a Pixel 9.
+- [ ] investigate the CLI and make sure it is robust against cancellation and
+  interruption
+- [ ] Investigate GTK session saving and storage to support snapshot
+- [x] Finish PDF export memory bounds and cancellation. Interactive exports now
+  show slide progress with an explicit Cancel action; CLI exports use the same
+  cancellable worker, turn Ctrl+C into a clean exit, and show progress on a TTY.
+  Raster and video backgrounds are capped at a 144-DPI-equivalent export bound,
+  only the most recent decoded surface is retained, and the destination is
+  replaced only after a complete successful render.
 - [ ] Compare GTK 4.22's `GtkSvg` paintable with librsvg on the SVG
   compatibility and pixel suites, retaining the existing shared librsvg source
   as the fallback for unsupported SVG features.
