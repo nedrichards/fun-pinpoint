@@ -38,7 +38,13 @@ belongs here.
   with wear os on a pixel watch 2 and android on a Pixel 9.
 - [ ] investigate the CLI and make sure it is robust against cancellation and
   interruption
-- [ ] Investigate GTK session saving and storage to support snapshot
+- [ ] **Blocked on the runtime providing GTK 4.24:** Integrate GTK-managed
+  desktop session save and restore once the pinned SDK exposes the new
+  application-state API. Follow `docs/session-restore.md`: normal launches must
+  stay clean; clean session restore may reopen a deck and slide; crash recovery
+  must remain windowed and paused without replaying commands, media, camera, or
+  rehearsal. GTK owns instance storage and window geometry; Pinpoint supplies
+  the shared presentation state and per-window audience/speaker roles.
 - [x] Finish PDF export memory bounds and cancellation. Interactive exports now
   show slide progress with an explicit Cancel action; CLI exports use the same
   cancellable worker, turn Ctrl+C into a clean exit, and show progress on a TTY.
@@ -64,6 +70,15 @@ belongs here.
   out of the lean presentation path when the editor is not installed or used.
 
 ## Completed work
+
+- [x] Investigate GTK session saving and storage for the desktop's future
+  restore model. GNOME 50 currently has GTK 4.22.4 and reports
+  `RestoreSupported=false`; the application integration is blocked until the
+  pinned runtime supplies GTK 4.24 or a stable successor. The GTK-owned
+  lifecycle, split application/window state contract, restore-reason policy,
+  portal-file behaviour, safety exclusions, and validation plan are recorded
+  in `docs/session-restore.md` rather than adding a competing private restore
+  file.
 
 - [x] Prepare a safe first public checkpoint. Exclude local build products,
   profiling captures, Python bytecode, crash dumps, and agent metadata; audit
