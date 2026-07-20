@@ -25,6 +25,7 @@ G_DEFINE_FINAL_TYPE (PpControl, pp_control, G_TYPE_OBJECT)
 enum
 {
   COMMAND,
+  CHANGED,
   N_SIGNALS,
 };
 
@@ -169,6 +170,15 @@ pp_control_class_init (PpControlClass *klass)
                                    2,
                                    G_TYPE_UINT,
                                    G_TYPE_BOOLEAN);
+  signals[CHANGED] = g_signal_new ("changed",
+                                   G_TYPE_FROM_CLASS (klass),
+                                   G_SIGNAL_RUN_LAST,
+                                   0,
+                                   NULL,
+                                   NULL,
+                                   NULL,
+                                   G_TYPE_NONE,
+                                   0);
 }
 
 static void
@@ -276,8 +286,12 @@ pp_control_set_presenting (PpControl *self,
                            gboolean   presenting)
 {
   g_return_if_fail (PP_IS_CONTROL (self));
-  self->presenting = !!presenting;
+  presenting = !!presenting;
+  if (self->presenting == presenting)
+    return;
+  self->presenting = presenting;
   update_enabled (self);
+  g_signal_emit (self, signals[CHANGED], 0);
 }
 
 gboolean
@@ -294,9 +308,12 @@ pp_control_set_slide (PpControl *self,
 {
   g_return_if_fail (PP_IS_CONTROL (self));
   g_return_if_fail (count == 0 || index < count);
+  if (self->slide_index == index && self->slide_count == count)
+    return;
   self->slide_index = index;
   self->slide_count = count;
   update_enabled (self);
+  g_signal_emit (self, signals[CHANGED], 0);
 }
 
 guint
@@ -329,11 +346,17 @@ pp_control_can_go_previous (PpControl *self)
   return self->presenting && self->slide_count > 0 && self->slide_index > 0;
 }
 
-static void
+static gboolean
 set_boolean_state (GSimpleAction *action,
                    gboolean       state)
 {
-  g_simple_action_set_state (action, g_variant_new_boolean (!!state));
+  g_autoptr (GVariant) current = g_action_get_state (G_ACTION (action));
+
+  state = !!state;
+  if (g_variant_get_boolean (current) == state)
+    return FALSE;
+  g_simple_action_set_state (action, g_variant_new_boolean (state));
+  return TRUE;
 }
 
 void
@@ -341,7 +364,8 @@ pp_control_set_blank (PpControl *self,
                       gboolean   blank)
 {
   g_return_if_fail (PP_IS_CONTROL (self));
-  set_boolean_state (self->blank, blank);
+  if (set_boolean_state (self->blank, blank))
+    g_signal_emit (self, signals[CHANGED], 0);
 }
 
 gboolean
@@ -359,7 +383,8 @@ pp_control_set_fullscreen (PpControl *self,
                            gboolean   fullscreen)
 {
   g_return_if_fail (PP_IS_CONTROL (self));
-  set_boolean_state (self->fullscreen, fullscreen);
+  if (set_boolean_state (self->fullscreen, fullscreen))
+    g_signal_emit (self, signals[CHANGED], 0);
 }
 
 gboolean
@@ -377,7 +402,8 @@ pp_control_set_speaker (PpControl *self,
                         gboolean   speaker)
 {
   g_return_if_fail (PP_IS_CONTROL (self));
-  set_boolean_state (self->speaker, speaker);
+  if (set_boolean_state (self->speaker, speaker))
+    g_signal_emit (self, signals[CHANGED], 0);
 }
 
 gboolean

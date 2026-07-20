@@ -45,6 +45,40 @@ assert_action_enabled (GActionGroup *group,
 }
 
 static void
+changed_cb (PpControl *control,
+            gpointer   user_data)
+{
+  guint *count = user_data;
+
+  (void) control;
+  (*count)++;
+}
+
+static void
+test_changed_signal (void)
+{
+  g_autoptr (GSimpleActionGroup) group = g_simple_action_group_new ();
+  g_autoptr (PpControl) control = pp_control_new (G_ACTION_MAP (group),
+                                                  G_ACTION_GROUP (group));
+  guint count = 0;
+
+  g_signal_connect (control, "changed", G_CALLBACK (changed_cb), &count);
+  pp_control_set_presenting (control, FALSE);
+  pp_control_set_slide (control, 0, 0);
+  pp_control_set_blank (control, FALSE);
+  g_assert_cmpuint (count, ==, 0);
+
+  pp_control_set_slide (control, 0, 3);
+  pp_control_set_slide (control, 0, 3);
+  pp_control_set_presenting (control, TRUE);
+  pp_control_set_presenting (control, TRUE);
+  pp_control_set_blank (control, TRUE);
+  pp_control_set_fullscreen (control, TRUE);
+  pp_control_set_speaker (control, TRUE);
+  g_assert_cmpuint (count, ==, 5);
+}
+
+static void
 test_control_state_and_commands (void)
 {
   g_autoptr (GSimpleActionGroup) group = g_simple_action_group_new ();
@@ -177,6 +211,7 @@ main (int   argc,
 {
   g_test_init (&argc, &argv, NULL);
   g_test_add_func ("/control/state-and-commands", test_control_state_and_commands);
+  g_test_add_func ("/control/changed-signal", test_changed_signal);
   g_test_add_func ("/control/key-mapping", test_key_mapping);
   g_test_add_func ("/control/actions-removed", test_actions_removed_on_dispose);
   return g_test_run ();

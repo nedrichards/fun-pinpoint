@@ -22,11 +22,6 @@ belongs here.
   Pinpoint 0.1.8. Evaluate a comment convention, sidecar metadata, or a versioned
   format extension; then expose the chosen description on the stage and add
   compatibility and accessibility fixtures.
-- [ ] Complete local desktop remote-control evaluation. Exercise the MPRIS
-  prototype through a real general-purpose client, test per-instance D-Bus
-  actions inside the production Flatpak, and verify discoverability and
-  selection with two simultaneous Pinpoint processes. Keep MPRIS play/pause
-  unavailable unless it truthfully controls a presentation timer.
 - [ ] Evaluate phone remote control once a real paired-device setup is
   available. Test Valent or GSConnect plus a phone before selecting an adapter.
   If those paths cannot provide a reliable presentation remote, prove the
@@ -70,6 +65,15 @@ belongs here.
   out of the lean presentation path when the editor is not installed or used.
 
 ## Completed work
+
+- [x] Complete local desktop remote-control evaluation. A general-purpose GNOME
+  MPRIS client selected and controlled two simultaneous instances inside the
+  installed Flatpak; per-instance `org.gtk.Actions` calls remained isolated;
+  and Flatpak required no extra session-bus permission. Instance names now use
+  the unique D-Bus connection rather than sandbox-local PIDs. The conservative
+  MPRIS adapter is now shipped for media-key and specialist-client navigation;
+  retain the action group for future exact local/companion control, and keep
+  play/pause unavailable until it has truthful timer semantics.
 
 - [x] Investigate GTK session saving and storage for the desktop's future
   restore model. GNOME 50 currently has GTK 4.22.4 and reports

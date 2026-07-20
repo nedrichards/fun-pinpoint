@@ -16,6 +16,10 @@
       text, images, scalable graphics, videos, speaker notes, rehearsed
       timings, transitions, and commands when the talk needs them.
     </p>
+    <p>
+      Navigate with presentation clickers, media next and previous keys, or
+      desktop applications which support MPRIS presentation control.
+    </p>
   </description>
   <launchable type="desktop-id">com.nedrichards.pinpoint.desktop</launchable>
   <screenshots>

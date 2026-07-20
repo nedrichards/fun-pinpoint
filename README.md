@@ -180,6 +180,13 @@ copy with all of its assets.
 - Tab: edit the slide command
 - Escape or Q: quit
 
+While a presentation is displayed, Pinpoint also exports one MPRIS player for
+that process. Desktop media controls and specialist remote applications can use
+MPRIS `Next` and `Previous` to change slides, including when neither Pinpoint
+window has focus. Pinpoint reports `Stopped`: play, pause, seek, and volume are
+deliberately unavailable because they do not truthfully describe presentation
+state.
+
 The speaker window also provides start/restart, pause, autoadvance, fullscreen,
 display swapping, and rehearsal controls. **Swap Displays** exchanges the
 audience and speaker displays while presenting fullscreen on two or more

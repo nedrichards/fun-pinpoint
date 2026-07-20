@@ -58,20 +58,23 @@ after Pinpoint exits.
 Pass `PINPOINT_FLATPAK_ID=com.nedrichards.pinpoint.Devel` to run the same gate
 against an installed development Flatpak instead of the SDK-built host binary.
 
-## Prototype results
+## Transport results
 
 The shared actions deliberately do not choose a transport. Isolated prototypes
 under `prototypes/` produced these results:
 
 1. A standard `org.gtk.Actions` group works on a per-process D-Bus name and
    exposes the action model without another command implementation. Two
-   simultaneous processes retain distinct names. This is the strongest local
-   automation candidate, subject to production Flatpak and assistive-client
-   proof.
-2. MPRIS `Next` and `Previous` can represent slide navigation and slide
-   position can be metadata. The prototype truthfully reports `Stopped` and
+   simultaneous processes retain distinct names and can be selected
+   independently inside the installed Flatpak. This is the selected local
+   automation and companion-process interface.
+2. MPRIS `Next` and `Previous` represent slide navigation and slide position is
+   exposed as metadata. The production adapter truthfully reports `Stopped` and
    rejects `PlayPause`, pause, seek, and volume. This may make some media
    clients hide it, which is preferable to claiming false playback semantics.
+   A general-purpose GNOME desktop MPRIS client discovered and controlled two
+   simultaneous sandboxed instances independently, so conservative MPRIS is a
+   viable compatibility bridge rather than the primary local interface.
 3. The peer Varlink schema maps cleanly onto the same state and commands and
    generates typed C bindings. `varlink-glib` describes calls over a supplied
    `GIOStream`; it does not provide pairing, authentication, encryption, or
@@ -94,10 +97,33 @@ host-policy and Flatpak implications:
 - https://valent.andyholmes.ca/documentation/protocol.html
 
 Valent and the KDE Connect protocol are also important comparison points: they
-already combine paired devices, presentation input, and MPRIS bridging. Neither
-Valent, GSConnect, nor a generic MPRIS client was installed for this spike, so a
-Pinpoint-specific peer protocol should not be selected until those existing
-paths have been tested with real phone and desktop clients.
+already combine paired devices, presentation input, and MPRIS bridging. Valent,
+GSConnect, and `playerctl` remain unavailable locally, but the GNOME desktop's
+general MPRIS client has now completed the local-client gate. A
+Pinpoint-specific peer protocol should still not be selected until the existing
+phone paths have been tested with real paired devices.
+
+## Local desktop result
+
+The live GNOME check on 20 July 2026 passed against the installed development
+Flatpak, whose runtime and finish arguments match the production manifest:
+
+- Flatpak's default filtered session bus accepted both the app-owned
+  per-instance action names and matching per-instance MPRIS names without a new
+  manifest permission.
+- Two simultaneous sandboxed processes remained separately discoverable and a
+  command addressed to either name changed only that presentation.
+- The general MPRIS client drove `Next` and `Previous`; `PlayPause` remained
+  unavailable and returned `org.freedesktop.DBus.Error.NotSupported`.
+- PID-based instance names failed because each Flatpak PID namespace assigned
+  its process PID 2. Names now use the session bus's unique connection identity,
+  which is distinct across sandboxes.
+
+These results select per-instance `org.gtk.Actions` for future exact local
+automation and a companion process. Its prototype names and object paths remain
+unstable. The deliberately narrow MPRIS adapter is now part of Pinpoint: each
+process owns a distinct player, publishes slide metadata and enabled state, and
+accepts only `Next`, `Previous`, and presentation fullscreen changes.
 
 ## P2P architecture boundary
 
@@ -137,7 +163,9 @@ An adapter is suitable for production only if it:
 - fails closed when presentation display mode ends; and
 - can be exercised by automated protocol tests plus a real client.
 
-The prototypes satisfy the automated command, state, and multi-instance parts.
-They do not yet satisfy real-client, production-Flatpak, pairing, or permission
-proof, so no adapter has been selected for production. The local-client and
-phone-client gates are sequenced in the central [Pinpoint backlog](../TODO.md).
+The production MPRIS adapter and local action prototype now satisfy the
+automated command and state checks, real desktop-client use,
+production-equivalent Flatpak permissions, and independent multi-instance
+selection. The phone path still lacks real-device pairing and permission proof,
+so the local result must not be treated as selecting a peer transport. That
+remaining gate is sequenced in the central [Pinpoint backlog](../TODO.md).

@@ -17,6 +17,8 @@ pinpoint_core_sources = files(
   'pp-display-selection.h',
   'pp-introduction.c',
   'pp-introduction.h',
+  'pp-mpris.c',
+  'pp-mpris.h',
   'pp-presentation.c',
   'pp-presentation.h',
   'pp-pdf.c',

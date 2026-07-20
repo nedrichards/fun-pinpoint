@@ -760,7 +760,8 @@ media_free (PpMedia *media)
   if (media == NULL)
     return;
 
-  if (media->bus_watch_id != 0)
+  if (media->bus_watch_id != 0 &&
+      g_main_context_find_source_by_id (NULL, media->bus_watch_id) != NULL)
     g_source_remove (media->bus_watch_id);
   if (GST_IS_ELEMENT (media->player))
     {

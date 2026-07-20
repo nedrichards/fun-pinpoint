@@ -1,17 +1,19 @@
-#include "pp-mpris-prototype.h"
+#include "pp-mpris.h"
 
 #define MPRIS_OBJECT_PATH "/org/mpris/MediaPlayer2"
 #define MPRIS_ROOT_INTERFACE "org.mpris.MediaPlayer2"
 #define MPRIS_PLAYER_INTERFACE "org.mpris.MediaPlayer2.Player"
 
-struct _PpMprisPrototype
+struct _PpMpris
 {
   GDBusConnection *connection;
   PpControl *control;
   GDBusNodeInfo *node_info;
+  char *application_id;
   char *bus_name;
   guint root_id;
   guint player_id;
+  gulong changed_id;
 };
 
 static const char introspection_xml[] =
@@ -61,6 +63,17 @@ static const char introspection_xml[] =
   " </interface>"
   "</node>";
 
+static char *
+get_instance_id (GDBusConnection *connection)
+{
+  const char *unique_name = g_dbus_connection_get_unique_name (connection);
+  char *instance_id;
+
+  g_return_val_if_fail (unique_name != NULL, NULL);
+  instance_id = g_strdup (unique_name[0] == ':' ? unique_name + 1 : unique_name);
+  return g_strdelimit (instance_id, ".-", '_');
+}
+
 static gboolean
 request_name (GDBusConnection *connection,
               const char      *bus_name,
@@ -96,31 +109,35 @@ request_name (GDBusConnection *connection,
 }
 
 static GVariant *
-metadata (PpMprisPrototype *self)
+metadata (PpMpris *self)
 {
   GVariantBuilder builder;
   guint index = pp_control_get_slide_index (self->control);
   guint count = pp_control_get_slide_count (self->control);
-  g_autofree char *track_id = g_strdup_printf (
-    "/com/nedrichards/pinpoint/Slide/s%u",
-    index + 1);
-  g_autofree char *title = g_strdup_printf ("Slide %u of %u",
-                                            index + 1,
-                                            count);
 
   g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
-  g_variant_builder_add (&builder,
-                         "{sv}",
-                         "mpris:trackid",
-                         g_variant_new_object_path (track_id));
-  g_variant_builder_add (&builder,
-                         "{sv}",
-                         "xesam:title",
-                         g_variant_new_string (title));
-  g_variant_builder_add (&builder,
-                         "{sv}",
-                         "xesam:album",
-                         g_variant_new_string ("Pinpoint presentation"));
+  if (pp_control_get_presenting (self->control) && count > 0)
+    {
+      g_autofree char *track_id = g_strdup_printf (
+        "/com/nedrichards/pinpoint/Slide/s%u",
+        index + 1);
+      g_autofree char *title = g_strdup_printf ("Slide %u of %u",
+                                                index + 1,
+                                                count);
+
+      g_variant_builder_add (&builder,
+                             "{sv}",
+                             "mpris:trackid",
+                             g_variant_new_object_path (track_id));
+      g_variant_builder_add (&builder,
+                             "{sv}",
+                             "xesam:title",
+                             g_variant_new_string (title));
+      g_variant_builder_add (&builder,
+                             "{sv}",
+                             "xesam:album",
+                             g_variant_new_string ("Pinpoint presentation"));
+    }
   return g_variant_builder_end (&builder);
 }
 
@@ -131,8 +148,8 @@ not_supported (GDBusMethodInvocation *invocation,
   g_dbus_method_invocation_return_error (invocation,
                                          G_DBUS_ERROR,
                                          G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "%s is not meaningful for this "
-                                         "presentation prototype",
+                                         "%s is not meaningful for a "
+                                         "presentation",
                                          method_name);
 }
 
@@ -146,7 +163,7 @@ method_call_cb (GDBusConnection       *connection,
                 GDBusMethodInvocation *invocation,
                 gpointer               user_data)
 {
-  PpMprisPrototype *self = user_data;
+  PpMpris *self = user_data;
 
   (void) connection;
   (void) sender;
@@ -179,8 +196,9 @@ get_property_cb (GDBusConnection  *connection,
                  GError          **error,
                  gpointer          user_data)
 {
-  PpMprisPrototype *self = user_data;
+  PpMpris *self = user_data;
   const char *empty[] = { NULL };
+  gboolean presenting = pp_control_get_presenting (self->control);
 
   (void) connection;
   (void) sender;
@@ -189,16 +207,17 @@ get_property_cb (GDBusConnection  *connection,
   if (g_str_equal (interface_name, MPRIS_ROOT_INTERFACE))
     {
       if (g_str_equal (property_name, "Identity"))
-        return g_variant_new_string ("Pinpoint Prototype");
+        return g_variant_new_string ("Pinpoint");
       if (g_str_equal (property_name, "DesktopEntry"))
-        return g_variant_new_string ("com.nedrichards.pinpoint");
+        return g_variant_new_string (self->application_id);
       if (g_str_equal (property_name, "SupportedUriSchemes") ||
           g_str_equal (property_name, "SupportedMimeTypes"))
         return g_variant_new_strv (empty, 0);
       if (g_str_equal (property_name, "Fullscreen"))
-        return g_variant_new_boolean (pp_control_get_fullscreen (self->control));
+        return g_variant_new_boolean (
+          pp_control_get_fullscreen (self->control));
       if (g_str_equal (property_name, "CanSetFullscreen"))
-        return g_variant_new_boolean (TRUE);
+        return g_variant_new_boolean (presenting);
       return g_variant_new_boolean (FALSE);
     }
 
@@ -213,7 +232,7 @@ get_property_cb (GDBusConnection  *connection,
   if (g_str_equal (property_name, "CanGoPrevious"))
     return g_variant_new_boolean (pp_control_can_go_previous (self->control));
   if (g_str_equal (property_name, "CanControl"))
-    return g_variant_new_boolean (TRUE);
+    return g_variant_new_boolean (presenting);
   if (g_str_equal (property_name, "Rate") ||
       g_str_equal (property_name, "Volume") ||
       g_str_equal (property_name, "MinimumRate") ||
@@ -234,13 +253,14 @@ set_property_cb (GDBusConnection  *connection,
                  GError          **error,
                  gpointer          user_data)
 {
-  PpMprisPrototype *self = user_data;
+  PpMpris *self = user_data;
 
   (void) connection;
   (void) sender;
   (void) object_path;
   if (g_str_equal (interface_name, MPRIS_ROOT_INTERFACE) &&
-      g_str_equal (property_name, "Fullscreen"))
+      g_str_equal (property_name, "Fullscreen") &&
+      pp_control_get_presenting (self->control))
     {
       gboolean requested = g_variant_get_boolean (value);
 
@@ -251,7 +271,7 @@ set_property_cb (GDBusConnection  *connection,
   g_set_error (error,
                G_DBUS_ERROR,
                G_DBUS_ERROR_NOT_SUPPORTED,
-               "%s is read-only in this presentation prototype",
+               "%s is read-only or unavailable for this presentation",
                property_name);
   return FALSE;
 }
@@ -263,9 +283,9 @@ static const GDBusInterfaceVTable interface_vtable = {
 };
 
 static void
-emit_properties (PpMprisPrototype *self,
-                 const char       *interface_name,
-                 GVariantBuilder  *changed)
+emit_properties (PpMpris        *self,
+                 const char     *interface_name,
+                 GVariantBuilder *changed)
 {
   GVariantBuilder invalidated;
 
@@ -283,24 +303,77 @@ emit_properties (PpMprisPrototype *self,
     NULL);
 }
 
-PpMprisPrototype *
-pp_mpris_prototype_new (GDBusConnection *connection,
-                        const char      *bus_name,
-                        PpControl       *control,
-                        GError         **error)
+void
+pp_mpris_sync (PpMpris *self)
 {
-  PpMprisPrototype *self;
+  GVariantBuilder player;
+  GVariantBuilder root;
+  gboolean presenting;
+
+  g_return_if_fail (self != NULL);
+  presenting = pp_control_get_presenting (self->control);
+  g_variant_builder_init (&player, G_VARIANT_TYPE ("a{sv}"));
+  g_variant_builder_add (&player, "{sv}", "Metadata", metadata (self));
+  g_variant_builder_add (&player,
+                         "{sv}",
+                         "CanGoNext",
+                         g_variant_new_boolean (
+                           pp_control_can_go_next (self->control)));
+  g_variant_builder_add (&player,
+                         "{sv}",
+                         "CanGoPrevious",
+                         g_variant_new_boolean (
+                           pp_control_can_go_previous (self->control)));
+  g_variant_builder_add (&player,
+                         "{sv}",
+                         "CanControl",
+                         g_variant_new_boolean (presenting));
+  emit_properties (self, MPRIS_PLAYER_INTERFACE, &player);
+
+  g_variant_builder_init (&root, G_VARIANT_TYPE ("a{sv}"));
+  g_variant_builder_add (&root,
+                         "{sv}",
+                         "Fullscreen",
+                         g_variant_new_boolean (
+                           pp_control_get_fullscreen (self->control)));
+  g_variant_builder_add (&root,
+                         "{sv}",
+                         "CanSetFullscreen",
+                         g_variant_new_boolean (presenting));
+  emit_properties (self, MPRIS_ROOT_INTERFACE, &root);
+}
+
+static void
+control_changed_cb (PpControl *control,
+                    gpointer   user_data)
+{
+  (void) control;
+  pp_mpris_sync (user_data);
+}
+
+PpMpris *
+pp_mpris_new (GDBusConnection *connection,
+              const char      *application_id,
+              PpControl       *control,
+              GError         **error)
+{
+  g_autofree char *instance_id = NULL;
+  PpMpris *self;
 
   g_return_val_if_fail (G_IS_DBUS_CONNECTION (connection), NULL);
-  g_return_val_if_fail (g_dbus_is_name (bus_name), NULL);
+  g_return_val_if_fail (g_application_id_is_valid (application_id), NULL);
   g_return_val_if_fail (PP_IS_CONTROL (control), NULL);
-  if (!request_name (connection, bus_name, error))
-    return NULL;
 
-  self = g_new0 (PpMprisPrototype, 1);
+  self = g_new0 (PpMpris, 1);
   self->connection = g_object_ref (connection);
   self->control = g_object_ref (control);
-  self->bus_name = g_strdup (bus_name);
+  self->application_id = g_strdup (application_id);
+  instance_id = get_instance_id (connection);
+  self->bus_name = g_strdup_printf ("org.mpris.MediaPlayer2.%s.instance_%s",
+                                    application_id,
+                                    instance_id);
+  if (!request_name (connection, self->bus_name, error))
+    goto error;
   self->node_info = g_dbus_node_info_new_for_xml (introspection_xml, error);
   if (self->node_info == NULL)
     goto error;
@@ -324,48 +397,32 @@ pp_mpris_prototype_new (GDBusConnection *connection,
     error);
   if (self->player_id == 0)
     goto error;
+  self->changed_id = g_signal_connect (control,
+                                       "changed",
+                                       G_CALLBACK (control_changed_cb),
+                                       self);
+  pp_mpris_sync (self);
   return self;
 
 error:
-  pp_mpris_prototype_free (self);
+  pp_mpris_free (self);
   return NULL;
 }
 
-void
-pp_mpris_prototype_sync (PpMprisPrototype *self)
+const char *
+pp_mpris_get_bus_name (PpMpris *self)
 {
-  GVariantBuilder player;
-  GVariantBuilder root;
-
-  g_return_if_fail (self != NULL);
-  g_variant_builder_init (&player, G_VARIANT_TYPE ("a{sv}"));
-  g_variant_builder_add (&player, "{sv}", "Metadata", metadata (self));
-  g_variant_builder_add (&player,
-                         "{sv}",
-                         "CanGoNext",
-                         g_variant_new_boolean (
-                           pp_control_can_go_next (self->control)));
-  g_variant_builder_add (&player,
-                         "{sv}",
-                         "CanGoPrevious",
-                         g_variant_new_boolean (
-                           pp_control_can_go_previous (self->control)));
-  emit_properties (self, MPRIS_PLAYER_INTERFACE, &player);
-
-  g_variant_builder_init (&root, G_VARIANT_TYPE ("a{sv}"));
-  g_variant_builder_add (&root,
-                         "{sv}",
-                         "Fullscreen",
-                         g_variant_new_boolean (
-                           pp_control_get_fullscreen (self->control)));
-  emit_properties (self, MPRIS_ROOT_INTERFACE, &root);
+  g_return_val_if_fail (self != NULL, NULL);
+  return self->bus_name;
 }
 
 void
-pp_mpris_prototype_free (PpMprisPrototype *self)
+pp_mpris_free (PpMpris *self)
 {
   if (self == NULL)
     return;
+  if (self->control != NULL && self->changed_id != 0)
+    g_signal_handler_disconnect (self->control, self->changed_id);
   if (self->player_id != 0)
     g_dbus_connection_unregister_object (self->connection, self->player_id);
   if (self->root_id != 0)
@@ -385,6 +442,7 @@ pp_mpris_prototype_free (PpMprisPrototype *self)
   g_clear_pointer (&self->node_info, g_dbus_node_info_unref);
   g_clear_object (&self->control);
   g_clear_object (&self->connection);
+  g_free (self->application_id);
   g_free (self->bus_name);
   g_free (self);
 }

@@ -11,6 +11,9 @@ static const char *pinpoint_path;
 static const char *presentation_path;
 static const char *media_presentation_path;
 
+#define MPRIS_OBJECT_PATH "/org/mpris/MediaPlayer2"
+#define MPRIS_PLAYER_INTERFACE "org.mpris.MediaPlayer2.Player"
+
 static void
 run_loop_for (guint milliseconds)
 {
@@ -122,6 +125,218 @@ terminate_running_application (GSubprocess *process)
   run_loop_for (750);
   g_assert_true (process_is_running (process));
   g_subprocess_send_signal (process, SIGTERM);
+}
+
+static GHashTable *
+list_bus_names (GDBusConnection *connection)
+{
+  g_autoptr (GVariant) reply = NULL;
+  g_auto (GStrv) names = NULL;
+  g_autoptr (GError) error = NULL;
+  GHashTable *result = g_hash_table_new_full (g_str_hash,
+                                               g_str_equal,
+                                               g_free,
+                                               NULL);
+
+  reply = g_dbus_connection_call_sync (connection,
+                                       "org.freedesktop.DBus",
+                                       "/org/freedesktop/DBus",
+                                       "org.freedesktop.DBus",
+                                       "ListNames",
+                                       NULL,
+                                       G_VARIANT_TYPE ("(as)"),
+                                       G_DBUS_CALL_FLAGS_NONE,
+                                       -1,
+                                       NULL,
+                                       &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (reply);
+  g_variant_get (reply, "(^as)", &names);
+  for (guint i = 0; names[i] != NULL; i++)
+    g_hash_table_add (result, g_strdup (names[i]));
+  return result;
+}
+
+static char *
+wait_for_new_mpris_name (GDBusConnection *connection,
+                         GHashTable      *ignored)
+{
+  const char *application_id = g_getenv ("FLATPAK_ID");
+  g_autofree char *prefix = NULL;
+
+  if (application_id == NULL ||
+      !g_application_id_is_valid (application_id))
+    application_id = "com.nedrichards.pinpoint";
+  prefix = g_strdup_printf ("org.mpris.MediaPlayer2.%s.instance_",
+                            application_id);
+  for (guint attempt = 0; attempt < 100; attempt++)
+    {
+      g_autoptr (GHashTable) names = list_bus_names (connection);
+      GHashTableIter iter;
+      gpointer key;
+
+      g_hash_table_iter_init (&iter, names);
+      while (g_hash_table_iter_next (&iter, &key, NULL))
+        if (g_str_has_prefix (key, prefix) &&
+            !g_hash_table_contains (ignored, key))
+          return g_strdup (key);
+      run_loop_for (50);
+    }
+  return NULL;
+}
+
+static GVariant *
+get_mpris_property (GDBusConnection *connection,
+                    const char      *bus_name,
+                    const char      *interface_name,
+                    const char      *property_name)
+{
+  g_autoptr (GVariant) reply = NULL;
+  g_autoptr (GVariant) boxed = NULL;
+  g_autoptr (GError) error = NULL;
+
+  reply = g_dbus_connection_call_sync (connection,
+                                       bus_name,
+                                       MPRIS_OBJECT_PATH,
+                                       "org.freedesktop.DBus.Properties",
+                                       "Get",
+                                       g_variant_new ("(ss)",
+                                                      interface_name,
+                                                      property_name),
+                                       G_VARIANT_TYPE ("(v)"),
+                                       G_DBUS_CALL_FLAGS_NONE,
+                                       -1,
+                                       NULL,
+                                       &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (reply);
+  g_variant_get (reply, "(@v)", &boxed);
+  return g_variant_get_variant (boxed);
+}
+
+static char *
+get_mpris_title (GDBusConnection *connection,
+                 const char      *bus_name)
+{
+  g_autoptr (GVariant) metadata = get_mpris_property (
+    connection,
+    bus_name,
+    MPRIS_PLAYER_INTERFACE,
+    "Metadata");
+  const char *title = NULL;
+
+  if (!g_variant_lookup (metadata, "xesam:title", "&s", &title))
+    return NULL;
+  return g_strdup (title);
+}
+
+static void
+wait_for_mpris_title (GDBusConnection *connection,
+                      const char      *bus_name,
+                      const char      *expected)
+{
+  for (guint attempt = 0; attempt < 100; attempt++)
+    {
+      g_autofree char *title = get_mpris_title (connection, bus_name);
+
+      if (g_strcmp0 (title, expected) == 0)
+        return;
+      run_loop_for (50);
+    }
+  g_error ("MPRIS player %s did not reach metadata title %s",
+           bus_name,
+           expected);
+}
+
+static void
+call_mpris_method (GDBusConnection *connection,
+                   const char      *bus_name,
+                   const char      *method_name)
+{
+  g_autoptr (GVariant) reply = NULL;
+  g_autoptr (GError) error = NULL;
+
+  reply = g_dbus_connection_call_sync (connection,
+                                       bus_name,
+                                       MPRIS_OBJECT_PATH,
+                                       MPRIS_PLAYER_INTERFACE,
+                                       method_name,
+                                       NULL,
+                                       NULL,
+                                       G_DBUS_CALL_FLAGS_NONE,
+                                       -1,
+                                       NULL,
+                                       &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (reply);
+}
+
+static void
+test_mpris_multi_instance_control (void)
+{
+  const char *arguments[] = { pinpoint_path, presentation_path, NULL };
+  g_autoptr (GDBusConnection) connection = g_bus_get_sync (
+    G_BUS_TYPE_SESSION,
+    NULL,
+    NULL);
+  g_autoptr (GHashTable) ignored = list_bus_names (connection);
+  g_autoptr (GSubprocess) first = launch_application (arguments);
+  g_autofree char *first_name = wait_for_new_mpris_name (connection, ignored);
+  g_autoptr (GSubprocess) second = NULL;
+  g_autofree char *second_name = NULL;
+  g_autoptr (GVariant) playback = NULL;
+  g_autoptr (GVariant) can_pause = NULL;
+  g_autoptr (GVariant) reply = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autofree char *remote_error = NULL;
+
+  g_assert_nonnull (first_name);
+  g_hash_table_add (ignored, g_strdup (first_name));
+  second = launch_application (arguments);
+  second_name = wait_for_new_mpris_name (connection, ignored);
+  g_assert_nonnull (second_name);
+  g_assert_cmpstr (first_name, !=, second_name);
+  wait_for_mpris_title (connection, first_name, "Slide 1 of 3");
+  wait_for_mpris_title (connection, second_name, "Slide 1 of 3");
+
+  call_mpris_method (connection, second_name, "Next");
+  wait_for_mpris_title (connection, second_name, "Slide 2 of 3");
+  wait_for_mpris_title (connection, first_name, "Slide 1 of 3");
+  playback = get_mpris_property (connection,
+                                 second_name,
+                                 MPRIS_PLAYER_INTERFACE,
+                                 "PlaybackStatus");
+  can_pause = get_mpris_property (connection,
+                                  second_name,
+                                  MPRIS_PLAYER_INTERFACE,
+                                  "CanPause");
+  g_assert_cmpstr (g_variant_get_string (playback, NULL), ==, "Stopped");
+  g_assert_false (g_variant_get_boolean (can_pause));
+
+  reply = g_dbus_connection_call_sync (connection,
+                                       second_name,
+                                       MPRIS_OBJECT_PATH,
+                                       MPRIS_PLAYER_INTERFACE,
+                                       "PlayPause",
+                                       NULL,
+                                       NULL,
+                                       G_DBUS_CALL_FLAGS_NONE,
+                                       -1,
+                                       NULL,
+                                       &error);
+  g_assert_null (reply);
+  g_assert_nonnull (error);
+  remote_error = g_dbus_error_get_remote_error (error);
+  g_assert_cmpstr (remote_error,
+                   ==,
+                   "org.freedesktop.DBus.Error.NotSupported");
+
+  terminate_running_application (second);
+  g_autofree char *second_stderr = finish_process (second, EXIT_SUCCESS);
+  g_assert_null (strstr (second_stderr, "pinpoint: "));
+  terminate_running_application (first);
+  g_autofree char *first_stderr = finish_process (first, EXIT_SUCCESS);
+  g_assert_null (strstr (first_stderr, "pinpoint: "));
 }
 
 static void
@@ -390,6 +605,8 @@ main (int   argc,
   g_test_init (&argc, &argv, NULL);
   g_test_add_func ("/application/fullscreen-speaker-shutdown",
                    test_fullscreen_speaker_shutdown);
+  g_test_add_func ("/application/mpris-multi-instance-control",
+                   test_mpris_multi_instance_control);
   g_test_add_func ("/application/playing-media-shutdown",
                    test_playing_media_shutdown);
   g_test_add_func ("/application/invalid-file-shutdown",

@@ -5,6 +5,7 @@
 #include "pp-display-selection.h"
 #include "pp-file-access.h"
 #include "pp-introduction.h"
+#include "pp-mpris.h"
 #include "pp-presentation.h"
 #include "pp-pdf.h"
 #include "pp-render.h"
@@ -31,6 +32,7 @@ typedef struct
   GtkWindow *window;
   PpStage *stage;
   PpControl *control;
+  PpMpris *mpris;
   GtkOverlay *overlay;
   GtkEntry *command_entry;
   GtkStack *view_stack;
@@ -2058,6 +2060,9 @@ activate_cb (GtkApplication *application,
              gpointer        user_data)
 {
   Pinpoint *pinpoint = user_data;
+  g_autoptr (GError) mpris_error = NULL;
+  GDBusConnection *connection;
+  const char *application_id;
   GtkEventController *keys;
   GtkEventController *motion;
   GtkEventController *command_keys;
@@ -2113,6 +2118,21 @@ activate_cb (GtkApplication *application,
                     "command",
                     G_CALLBACK (control_command_cb),
                     pinpoint);
+  connection = g_application_get_dbus_connection (G_APPLICATION (application));
+  application_id = g_getenv ("FLATPAK_ID");
+  if (application_id == NULL ||
+      !g_application_id_is_valid (application_id))
+    application_id = g_application_get_application_id (
+      G_APPLICATION (application));
+  if (connection != NULL)
+    pinpoint->mpris = pp_mpris_new (connection,
+                                    application_id,
+                                    pinpoint->control,
+                                    &mpris_error);
+  if (pinpoint->mpris == NULL)
+    g_warning ("Unable to export MPRIS controls: %s",
+               mpris_error != NULL ? mpris_error->message
+                                   : "no session bus connection");
 
   keys = gtk_event_controller_key_new ();
   g_signal_connect (keys, "key-pressed", G_CALLBACK (key_pressed_cb), pinpoint);
@@ -2205,6 +2225,7 @@ pinpoint_clear (Pinpoint *pinpoint)
   g_clear_object (&pinpoint->monitors);
   g_clear_pointer (&pinpoint->setup_monitor_choices, g_ptr_array_unref);
   g_clear_pointer (&pinpoint->speaker, pp_speaker_free);
+  g_clear_pointer (&pinpoint->mpris, pp_mpris_free);
   g_clear_object (&pinpoint->control);
   if (pinpoint->window != NULL)
     {

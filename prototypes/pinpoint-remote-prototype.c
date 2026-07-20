@@ -1,15 +1,13 @@
 #include "pp-control.h"
 #include "pp-dbus-prototype.h"
-#include "pp-mpris-prototype.h"
+#include "pp-mpris.h"
 
 #include <glib-unix.h>
 #include <stdlib.h>
-#include <unistd.h>
 
 typedef struct
 {
   PpControl *control;
-  PpMprisPrototype *mpris;
   GMainLoop *loop;
   guint slide_index;
   guint slide_count;
@@ -75,8 +73,6 @@ command_cb (PpControl *control,
   pp_control_set_slide (control,
                         prototype->slide_index,
                         prototype->slide_count);
-  if (prototype->mpris != NULL)
-    pp_mpris_prototype_sync (prototype->mpris);
   print_state (prototype, name);
 }
 
@@ -86,7 +82,18 @@ quit_cb (gpointer user_data)
   Prototype *prototype = user_data;
 
   g_main_loop_quit (prototype->loop);
-  return G_SOURCE_REMOVE;
+  return G_SOURCE_CONTINUE;
+}
+
+static char *
+get_instance_id (GDBusConnection *connection)
+{
+  const char *unique_name = g_dbus_connection_get_unique_name (connection);
+  char *instance_id;
+
+  g_return_val_if_fail (unique_name != NULL, NULL);
+  instance_id = g_strdup (unique_name[0] == ':' ? unique_name + 1 : unique_name);
+  return g_strdelimit (instance_id, ".-", '_');
 }
 
 int
@@ -111,10 +118,11 @@ main (int   argc,
   g_autoptr (GSimpleActionGroup) actions = NULL;
   g_autoptr (PpControl) control = NULL;
   g_autoptr (PpDbusPrototype) dbus = NULL;
-  g_autoptr (PpMprisPrototype) mpris = NULL;
+  g_autoptr (PpMpris) mpris = NULL;
   g_autofree char *dbus_name = NULL;
-  g_autofree char *mpris_name = NULL;
+  g_autofree char *instance_id = NULL;
   g_autoptr (GMainLoop) loop = NULL;
+  const char *application_id;
   Prototype prototype = { 0 };
   guint sigint_id;
   guint sigterm_id;
@@ -134,12 +142,17 @@ main (int   argc,
     }
 
   setvbuf (stdout, NULL, _IONBF, 0);
+  application_id = g_getenv ("FLATPAK_ID");
+  if (application_id == NULL || !g_dbus_is_name (application_id))
+    application_id = "com.nedrichards.pinpoint";
+
   connection = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, &error);
   if (connection == NULL)
     {
       g_printerr ("prototype: %s\n", error->message);
       return EXIT_FAILURE;
     }
+  instance_id = get_instance_id (connection);
 
   actions = g_simple_action_group_new ();
   control = pp_control_new (G_ACTION_MAP (actions), G_ACTION_GROUP (actions));
@@ -153,8 +166,9 @@ main (int   argc,
   if (enable_dbus)
     {
       dbus_name = g_strdup_printf (
-        "com.nedrichards.pinpoint.Prototype.instance_%ld",
-        (long) getpid ());
+        "%s.Prototype.instance_%s",
+        application_id,
+        instance_id);
       dbus = pp_dbus_prototype_new (connection,
                                     dbus_name,
                                     G_ACTION_GROUP (actions),
@@ -170,22 +184,17 @@ main (int   argc,
 
   if (enable_mpris)
     {
-      mpris_name = g_strdup_printf (
-        "org.mpris.MediaPlayer2.com.nedrichards.pinpoint.instance_%ld",
-        (long) getpid ());
-      mpris = pp_mpris_prototype_new (connection,
-                                      mpris_name,
-                                      control,
-                                      &error);
+      mpris = pp_mpris_new (connection,
+                            application_id,
+                            control,
+                            &error);
       if (mpris == NULL)
         {
           g_printerr ("prototype: %s\n", error->message);
           return EXIT_FAILURE;
         }
-      prototype.mpris = mpris;
-      g_print ("MPRIS_NAME=%s\n", mpris_name);
+      g_print ("MPRIS_NAME=%s\n", pp_mpris_get_bus_name (mpris));
       g_print ("MPRIS_PATH=/org/mpris/MediaPlayer2\n");
-      pp_mpris_prototype_sync (mpris);
     }
 
   print_state (&prototype, "ready");
@@ -196,6 +205,5 @@ main (int   argc,
   g_main_loop_run (loop);
   g_source_remove (sigint_id);
   g_source_remove (sigterm_id);
-  prototype.mpris = NULL;
   return EXIT_SUCCESS;
 }

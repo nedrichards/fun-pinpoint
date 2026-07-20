@@ -5,7 +5,9 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir=${PINPOINT_PROTOTYPE_BUILD_DIR:-"$root/_build-prototypes"}
 prototype="$build_dir/prototypes/pinpoint-remote-prototype"
 sdk_ref=${PINPOINT_SDK_REF:-org.gnome.Sdk//50}
+flatpak_id=${PINPOINT_PROTOTYPE_FLATPAK_ID:-}
 installation=--user
+flatpak_installation=--user
 
 if ! flatpak info --user "$sdk_ref" >/dev/null 2>&1
 then
@@ -22,6 +24,24 @@ arch=$(flatpak --default-arch)
 sdk_libdir="$sdk_location/files/lib/$arch-linux-gnu"
 . "$root/tests/sdk-host-environment.sh"
 pinpoint_configure_sdk_host_environment "$sdk_location" "$sdk_libdir"
+
+if [ -n "$flatpak_id" ] && ! flatpak info --user "$flatpak_id" >/dev/null 2>&1
+then
+  flatpak_installation=--system
+fi
+
+run_prototype ()
+{
+  if [ -n "$flatpak_id" ]
+  then
+    flatpak run "$flatpak_installation" \
+      --filesystem="$root:ro" \
+      --command="$prototype" \
+      "$flatpak_id" "$@"
+  else
+    "$prototype" "$@"
+  fi
+}
 
 run_tmp=$(mktemp -d -t pinpoint-remote-prototype-XXXXXX)
 first_pid=
@@ -61,7 +81,7 @@ wait_for_value ()
   return 1
 }
 
-"$prototype" --dbus --mpris --slides=3 \
+run_prototype --dbus --mpris --slides=3 \
   >"$run_tmp/first.out" 2>"$run_tmp/first.err" &
 first_pid=$!
 if ! dbus_name=$(wait_for_value "$run_tmp/first.out" DBUS_NAME)
@@ -155,13 +175,24 @@ then
   exit 1
 fi
 
-"$prototype" --mpris --slides=2 \
+run_prototype --dbus --mpris --slides=2 \
   >"$run_tmp/second.out" 2>"$run_tmp/second.err" &
 second_pid=$!
+if ! second_dbus_name=$(wait_for_value "$run_tmp/second.out" DBUS_NAME)
+then
+  echo "Second prototype did not export its D-Bus name." >&2
+  cat "$run_tmp/second.err" >&2
+  exit 1
+fi
 if ! second_mpris_name=$(wait_for_value "$run_tmp/second.out" MPRIS_NAME)
 then
   echo "Second prototype did not export its MPRIS name." >&2
   cat "$run_tmp/second.err" >&2
+  exit 1
+fi
+if [ "$dbus_name" = "$second_dbus_name" ]
+then
+  echo "Simultaneous prototypes did not receive distinct D-Bus names." >&2
   exit 1
 fi
 if [ "$mpris_name" = "$second_mpris_name" ]
@@ -175,7 +206,31 @@ gdbus introspect --session \
 gdbus introspect --session \
   --dest "$second_mpris_name" \
   --object-path /org/mpris/MediaPlayer2 >/dev/null
+gdbus call --session \
+  --dest "$second_dbus_name" \
+  --object-path /com/nedrichards/pinpoint/Control \
+  --method org.gtk.Actions.Activate \
+  presentation-next '[]' '{}' >/dev/null
 
-printf 'D-Bus adapter: %s\n' "$dbus_name"
+attempts=0
+while [ "$attempts" -lt 100 ]
+do
+  if awk '/COMMAND=next SLIDE=2\/2/ { found = 1 } END { exit found ? 0 : 1 }' \
+    "$run_tmp/second.out"
+  then
+    break
+  fi
+  attempts=$((attempts + 1))
+  sleep 0.1
+done
+if [ "$attempts" -eq 100 ]
+then
+  echo "The second D-Bus adapter did not reach its own control model." >&2
+  cat "$run_tmp/second.out" >&2
+  cat "$run_tmp/second.err" >&2
+  exit 1
+fi
+
+printf 'D-Bus adapters: %s and %s\n' "$dbus_name" "$second_dbus_name"
 printf 'MPRIS adapters: %s and %s\n' "$mpris_name" "$second_mpris_name"
 echo "Remote prototypes passed: shared actions, conservative MPRIS semantics, and independent instances."
