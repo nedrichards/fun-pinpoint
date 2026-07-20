@@ -33,6 +33,7 @@ control_command_cb (PpControl *control,
     (*requests)++;
 }
 static guint media_warning_count;
+static guint reduced_motion_message_count;
 
 static GtkApplication *create_application (const char *application_id);
 
@@ -43,11 +44,16 @@ test_log_writer (GLogLevelFlags   log_level,
                  gpointer         user_data)
 {
   for (gsize i = 0; i < n_fields; i++)
-    if (g_str_equal (fields[i].key, "MESSAGE") &&
-        fields[i].value != NULL &&
-        g_str_has_prefix (fields[i].value,
-                          "Unable to play video background:"))
-      media_warning_count++;
+    if (g_str_equal (fields[i].key, "MESSAGE") && fields[i].value != NULL)
+      {
+        if (g_str_has_prefix (fields[i].value,
+                              "Unable to play video background:"))
+          media_warning_count++;
+        else if (g_str_has_prefix (
+                   fields[i].value,
+                   "Reduced motion is enabled; slide transitions"))
+          reduced_motion_message_count++;
+      }
 
   return g_log_writer_default (log_level, fields, n_fields, user_data);
 }
@@ -380,23 +386,44 @@ test_reduced_motion_disables_transitions (void)
 {
   GtkSettings *settings = gtk_settings_get_default ();
   GtkWidget *stage = pp_stage_new ();
+  GtkReducedMotion reduced_motion;
   gboolean animations_enabled;
+  guint messages_before = reduced_motion_message_count;
 
   g_object_ref_sink (stage);
   g_assert_nonnull (settings);
   g_object_get (settings,
                 "gtk-enable-animations",
                 &animations_enabled,
+                "gtk-interface-reduced-motion",
+                &reduced_motion,
                 NULL);
-  g_object_set (settings, "gtk-enable-animations", FALSE, NULL);
+  g_object_set (settings,
+                "gtk-enable-animations", TRUE,
+                "gtk-interface-reduced-motion", GTK_REDUCED_MOTION_REDUCE,
+                NULL);
   pp_stage_set_presentation (PP_STAGE (stage),
                              load_fixture (native_transition_fixture_path),
                              0);
   g_assert_true (pp_stage_next (PP_STAGE (stage)));
   g_assert_false (pp_stage_is_transitioning (PP_STAGE (stage)));
+  g_assert_cmpuint (reduced_motion_message_count, ==, messages_before + 1);
+  g_assert_true (pp_stage_previous (PP_STAGE (stage)));
+  g_assert_false (pp_stage_is_transitioning (PP_STAGE (stage)));
+  g_assert_cmpuint (reduced_motion_message_count, ==, messages_before + 1);
+  g_object_set (settings,
+                "gtk-enable-animations", FALSE,
+                "gtk-interface-reduced-motion",
+                GTK_REDUCED_MOTION_NO_PREFERENCE,
+                NULL);
+  g_assert_true (pp_stage_next (PP_STAGE (stage)));
+  g_assert_false (pp_stage_is_transitioning (PP_STAGE (stage)));
+  g_assert_cmpuint (reduced_motion_message_count, ==, messages_before + 1);
   g_object_set (settings,
                 "gtk-enable-animations",
                 animations_enabled,
+                "gtk-interface-reduced-motion",
+                reduced_motion,
                 NULL);
   g_object_unref (stage);
 }
@@ -701,6 +728,12 @@ test_bundled_introduction_video_lifecycle (void)
 
   gtk_window_present (window);
   run_loop_for (1250);
+  g_assert_true (pp_stage_is_media_offload_configured (PP_STAGE (stage)));
+  pp_stage_set_blank (PP_STAGE (stage), TRUE);
+  g_assert_false (pp_stage_is_media_offload_configured (PP_STAGE (stage)));
+  pp_stage_set_blank (PP_STAGE (stage), FALSE);
+  run_loop_for (100);
+  g_assert_true (pp_stage_is_media_offload_configured (PP_STAGE (stage)));
   gtk_window_destroy (window);
   run_loop_for (150);
 }

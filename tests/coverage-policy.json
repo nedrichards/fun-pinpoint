@@ -94,7 +94,7 @@
       "uncovered_lines": 93
     },
     "src/pp-stage.c": {
-      "uncovered_lines": 291
+      "uncovered_lines": 295
     },
     "src/pp-transition.c": {
       "uncovered_branches": 27,

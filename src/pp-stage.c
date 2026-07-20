@@ -9,6 +9,7 @@
 #include <gio/gunixfdlist.h>
 #include <gst/gst.h>
 #include <librsvg/rsvg.h>
+#include <math.h>
 #include <unistd.h>
 
 #define PORTAL_BUS_NAME "org.freedesktop.portal.Desktop"
@@ -28,6 +29,7 @@ typedef struct
   gboolean playing;
   gboolean failed;
   gboolean diagnostics_reported;
+  gboolean offload_reported;
 } PpMedia;
 
 typedef struct
@@ -128,6 +130,11 @@ struct _PpStage
   guint tick_id;
 
   PpPageCurlView *curl_view;
+  GtkWidget *media_offload;
+  GtkPicture *media_picture;
+  PpMedia *offloaded_media;
+  const PpSlide *offloaded_slide;
+  gboolean media_offload_allocated;
   GdkTexture *curl_previous_texture;
   GdkTexture *curl_current_texture;
   float curl_texture_width;
@@ -773,11 +780,57 @@ media_free (PpMedia *media)
 }
 
 static void
+disable_media_offload (PpStage *self)
+{
+  if (self->media_offload == NULL)
+    return;
+
+  gtk_widget_set_visible (self->media_offload, FALSE);
+  gtk_picture_set_paintable (self->media_picture, NULL);
+  self->offloaded_media = NULL;
+  self->offloaded_slide = NULL;
+  self->media_offload_allocated = FALSE;
+}
+
+static gboolean
+configure_media_offload (PpStage       *self,
+                         PpMedia       *media,
+                         const PpSlide *slide)
+{
+  if (self->transitioning || media == NULL || media->paintable == NULL)
+    return FALSE;
+
+  if (self->offloaded_media != media || self->offloaded_slide != slide)
+    {
+      self->offloaded_media = media;
+      self->offloaded_slide = slide;
+      self->media_offload_allocated = FALSE;
+      gtk_picture_set_paintable (self->media_picture, media->paintable);
+      gtk_widget_set_visible (self->media_offload, TRUE);
+      gtk_widget_queue_allocate (GTK_WIDGET (self));
+    }
+
+  if (!media->offload_reported)
+    {
+      g_log ("pinpoint-media",
+             G_LOG_LEVEL_DEBUG,
+             "Media background “%s” is configured for GtkGraphicsOffload; "
+             "GTK will fall back to GSK when direct compositor offload is "
+             "not possible",
+             media->label);
+      media->offload_reported = TRUE;
+    }
+
+  return self->media_offload_allocated;
+}
+
+static void
 stop_all_media (PpStage *self)
 {
   GHashTableIter iter;
   gpointer value;
 
+  disable_media_offload (self);
   g_hash_table_iter_init (&iter, self->media);
   while (g_hash_table_iter_next (&iter, NULL, &value))
     {
@@ -1170,13 +1223,16 @@ snapshot_layer_begin (GtkSnapshot       *snapshot,
   gtk_snapshot_scale (snapshot, state->scale_x, state->scale_y);
   graphene_point_init (&point, -width / 2.0f, -height / 2.0f);
   gtk_snapshot_translate (snapshot, &point);
-  gtk_snapshot_push_opacity (snapshot, CLAMP (state->opacity, 0.0f, 1.0f));
+  if (state->opacity < 1.0f)
+    gtk_snapshot_push_opacity (snapshot, CLAMP (state->opacity, 0.0f, 1.0f));
 }
 
 static void
-snapshot_layer_end (GtkSnapshot *snapshot)
+snapshot_layer_end (GtkSnapshot      *snapshot,
+                    const LayerState *state)
 {
-  gtk_snapshot_pop (snapshot);
+  if (state->opacity < 1.0f)
+    gtk_snapshot_pop (snapshot);
   gtk_snapshot_restore (snapshot);
 }
 
@@ -1748,16 +1804,23 @@ snapshot_background (PpStage              *self,
                                          intrinsic_width,
                                          intrinsic_height,
                                          &rect);
-          gtk_snapshot_push_clip (snapshot, &bounds);
-          gtk_snapshot_save (snapshot);
-          graphene_point_init (&point, rect.x, rect.y);
-          gtk_snapshot_translate (snapshot, &point);
-          gdk_paintable_snapshot (media->paintable,
-                                  GDK_SNAPSHOT (snapshot),
-                                  rect.width,
-                                  rect.height);
-          gtk_snapshot_restore (snapshot);
-          gtk_snapshot_pop (snapshot);
+          if (active && configure_media_offload (self, media, slide))
+            gtk_widget_snapshot_child (GTK_WIDGET (self),
+                                       self->media_offload,
+                                       snapshot);
+          else
+            {
+              gtk_snapshot_push_clip (snapshot, &bounds);
+              gtk_snapshot_save (snapshot);
+              graphene_point_init (&point, rect.x, rect.y);
+              gtk_snapshot_translate (snapshot, &point);
+              gdk_paintable_snapshot (media->paintable,
+                                      GDK_SNAPSHOT (snapshot),
+                                      rect.width,
+                                      rect.height);
+              gtk_snapshot_restore (snapshot);
+              gtk_snapshot_pop (snapshot);
+            }
         }
     }
   else if (slide->background_type == PP_BACKGROUND_IMAGE)
@@ -1902,7 +1965,7 @@ snapshot_slide (PpStage              *self,
 
   snapshot_layer_begin (snapshot, &transition->background, width, height);
   snapshot_background (self, snapshot, presentation, slide, active, width, height);
-  snapshot_layer_end (snapshot);
+  snapshot_layer_end (snapshot, &transition->background);
 
   if (slide->text != NULL && *slide->text != '\0')
     text = get_cached_text (self, slide, width, height);
@@ -1918,15 +1981,15 @@ snapshot_slide (PpStage              *self,
                                    shading_rect.width,
                                    shading_rect.height);
       gtk_snapshot_append_color (snapshot, &shading_color, &bounds);
-      snapshot_layer_end (snapshot);
+      snapshot_layer_end (snapshot, &transition->midground);
     }
 
   snapshot_layer_begin (snapshot, &transition->foreground, width, height);
   if (text != NULL && text->node != NULL)
     gtk_snapshot_append_node (snapshot, text->node);
-  snapshot_layer_end (snapshot);
+  snapshot_layer_end (snapshot, &transition->foreground);
 
-  snapshot_layer_end (snapshot);
+  snapshot_layer_end (snapshot, &transition->actor);
 }
 
 static gboolean
@@ -2225,6 +2288,29 @@ pp_stage_snapshot (GtkWidget   *widget,
     }
 }
 
+static int
+align_offload_value (int    value,
+                     double surface_scale,
+                     int    minimum)
+{
+  /* Wayland offload requires integral device coordinates. Fractional scales
+   * used by GTK have small rational denominators, so a nearby logical value
+   * preserves the authored geometry while making the compositor candidate
+   * eligible. */
+  for (int delta = 0; delta <= 4; delta++)
+    {
+      int candidates[] = { value - delta, value + delta };
+
+      for (guint i = 0; i < G_N_ELEMENTS (candidates); i++)
+        if (candidates[i] >= minimum &&
+            fabs (candidates[i] * surface_scale -
+                  round (candidates[i] * surface_scale)) < 0.001)
+          return candidates[i];
+    }
+
+  return MAX (minimum, value);
+}
+
 static void
 pp_stage_size_allocate (GtkWidget *widget,
                         int        width,
@@ -2232,6 +2318,66 @@ pp_stage_size_allocate (GtkWidget *widget,
                         int        baseline)
 {
   PpStage *self = PP_STAGE (widget);
+
+  if (gtk_widget_get_visible (self->media_offload) &&
+      self->offloaded_media != NULL &&
+      self->offloaded_slide != NULL)
+    {
+      int intrinsic_width = gdk_paintable_get_intrinsic_width (
+        self->offloaded_media->paintable);
+      int intrinsic_height = gdk_paintable_get_intrinsic_height (
+        self->offloaded_media->paintable);
+      PpRect rect;
+      GtkNative *native = gtk_widget_get_native (widget);
+      GdkSurface *surface = native != NULL
+        ? gtk_native_get_surface (native)
+        : NULL;
+      double surface_scale = surface != NULL
+        ? gdk_surface_get_scale (surface)
+        : 1.0;
+      int allocated_x;
+      int allocated_y;
+      int allocated_width;
+      int allocated_height;
+      graphene_point_t point;
+      GskTransform *transform;
+
+      if (intrinsic_width <= 0 || intrinsic_height <= 0)
+        {
+          intrinsic_width = width;
+          intrinsic_height = height;
+        }
+      pp_render_get_background_rect (self->offloaded_slide,
+                                     width,
+                                     height,
+                                     intrinsic_width,
+                                     intrinsic_height,
+                                     &rect);
+      allocated_x = (int) roundf (rect.x);
+      allocated_y = (int) roundf (rect.y);
+      allocated_width = MAX (1, (int) roundf (rect.width));
+      allocated_height = MAX (1, (int) roundf (rect.height));
+      allocated_x = align_offload_value (allocated_x,
+                                         surface_scale,
+                                         G_MININT);
+      allocated_y = align_offload_value (allocated_y,
+                                         surface_scale,
+                                         G_MININT);
+      allocated_width = align_offload_value (allocated_width,
+                                             surface_scale,
+                                             1);
+      allocated_height = align_offload_value (allocated_height,
+                                              surface_scale,
+                                              1);
+      graphene_point_init (&point, allocated_x, allocated_y);
+      transform = gsk_transform_translate (NULL, &point);
+      gtk_widget_allocate (self->media_offload,
+                           allocated_width,
+                           allocated_height,
+                           baseline,
+                           transform);
+      self->media_offload_allocated = TRUE;
+    }
 
   gtk_widget_allocate (GTK_WIDGET (self->curl_view),
                        width,
@@ -2275,6 +2421,7 @@ pp_stage_dispose (GObject *object)
                                              self->camera_response_subscription);
       self->camera_response_subscription = 0;
     }
+  disable_media_offload (self);
   g_clear_pointer (&self->presentation, pp_presentation_free);
   if (self->assets != NULL)
     {
@@ -2294,6 +2441,12 @@ pp_stage_dispose (GObject *object)
     {
       gtk_widget_unparent (GTK_WIDGET (self->curl_view));
       self->curl_view = NULL;
+    }
+  if (self->media_offload != NULL)
+    {
+      gtk_widget_unparent (self->media_offload);
+      self->media_offload = NULL;
+      self->media_picture = NULL;
     }
 
   G_OBJECT_CLASS (pp_stage_parent_class)->dispose (object);
@@ -2364,6 +2517,13 @@ pp_stage_init (PpStage *self)
   self->curl_view = PP_PAGE_CURL_VIEW (pp_page_curl_view_new ());
   gtk_widget_set_visible (GTK_WIDGET (self->curl_view), FALSE);
   gtk_widget_set_parent (GTK_WIDGET (self->curl_view), GTK_WIDGET (self));
+  self->media_picture = GTK_PICTURE (gtk_picture_new ());
+  gtk_picture_set_can_shrink (self->media_picture, TRUE);
+  gtk_picture_set_content_fit (self->media_picture, GTK_CONTENT_FIT_FILL);
+  self->media_offload = gtk_graphics_offload_new (
+    GTK_WIDGET (self->media_picture));
+  gtk_widget_set_visible (self->media_offload, FALSE);
+  gtk_widget_set_parent (self->media_offload, GTK_WIDGET (self));
   self->media_enabled = TRUE;
   self->audio_enabled = TRUE;
   self->accessible_context = g_strdup ("Presentation slide");
@@ -2495,14 +2655,25 @@ go_to_slide (PpStage  *self,
                          TRUE,
                          backwards));
   {
+    static gsize reduced_motion_reported;
+    GtkSettings *settings = gtk_widget_get_settings (GTK_WIDGET (self));
+    GtkReducedMotion reduced_motion = GTK_REDUCED_MOTION_NO_PREFERENCE;
     gboolean animations_enabled = TRUE;
 
-    g_object_get (gtk_widget_get_settings (GTK_WIDGET (self)),
-                  "gtk-enable-animations",
-                  &animations_enabled,
+    g_object_get (settings,
+                  "gtk-enable-animations", &animations_enabled,
+                  "gtk-interface-reduced-motion", &reduced_motion,
                   NULL);
-    if (!animations_enabled)
-      self->transition_duration_ms = 0;
+    if (!animations_enabled || reduced_motion == GTK_REDUCED_MOTION_REDUCE)
+      {
+        self->transition_duration_ms = 0;
+        if (g_once_init_enter (&reduced_motion_reported))
+          {
+            g_message ("Reduced motion is enabled; slide transitions will "
+                       "complete immediately");
+            g_once_init_leave (&reduced_motion_reported, 1);
+          }
+      }
   }
   self->transitioning = self->transition_duration_ms > 0;
   update_accessibility (self);
@@ -2565,6 +2736,8 @@ pp_stage_set_blank (PpStage  *self,
   if (self->blank == blank)
     return;
   self->blank = blank;
+  if (blank)
+    disable_media_offload (self);
   update_accessibility (self);
   gtk_widget_queue_draw (GTK_WIDGET (self));
 }
@@ -2595,6 +2768,15 @@ pp_stage_is_transitioning (PpStage *self)
 {
   g_return_val_if_fail (PP_IS_STAGE (self), FALSE);
   return self->transitioning || self->tick_id != 0;
+}
+
+gboolean
+pp_stage_is_media_offload_configured (PpStage *self)
+{
+  g_return_val_if_fail (PP_IS_STAGE (self), FALSE);
+  return self->offloaded_media != NULL &&
+         self->media_offload_allocated &&
+         gtk_widget_get_visible (self->media_offload);
 }
 
 void

@@ -39,13 +39,9 @@ belongs here.
   buffers, but the UI should expose cancellation, negotiate or scale the winner
   to an explicit export-quality bound, and release or bound decoded image
   surfaces instead of retaining the entire deck.
-- [ ] Prototype modern GTK display fast paths without weakening compatibility.
-  Test `GtkGraphicsOffload` around a dedicated static video/camera paintable and
-  prove when DMA-BUF frames can bypass GSK on Wayland while text, shading, and
-  transitions remain correct. Compare GTK 4.22's `GtkSvg` paintable with
-  librsvg on the SVG compatibility and pixel suites, retaining librsvg fallback
-  for unsupported SVG. Also honour `gtk-interface-reduced-motion` when
-  suppressing slide motion.
+- [ ] Compare GTK 4.22's `GtkSvg` paintable with librsvg on the SVG
+  compatibility and pixel suites, retaining the existing shared librsvg source
+  as the fallback for unsupported SVG features.
 - [ ] Resume hardware performance validation after the pending local update
   unblocks Sysprof. Capture page-curl frame pacing, its one-time GSK-to-CPU-to-GL
   transfer, peak texture residency, and colour consistency on representative
@@ -121,6 +117,14 @@ belongs here.
   one parsed librsvg source per file. A 64 MiB RGBA-equivalent decoded-texture
   LRU replaces the eight-image limit; tests cover deduplication, invalidation,
   cancellation, differently sized SVG consumers, and byte-bounded eviction.
+- [x] Prototype GTK graphics offload without weakening compatibility. Stable
+  video and camera backgrounds use a dedicated `GtkGraphicsOffload` child,
+  while overlays, clipping, transitions, unsupported platforms, formats, and
+  colour states retain GTK's normal GSK fallback. Bounds are aligned to physical
+  pixels at fractional scales. A live Wayland run confirmed NV12 DMA-BUF input,
+  subsurface creation, and the compositor's explicit fallback reasons. GTK
+  4.22's reduced-motion preference and the older animations switch both suppress
+  transitions, with one informational message explaining the resulting jump.
 - [x] Remove the first interactive PDF stalls and redundant thumbnail copies.
   Launch-screen export now runs through a tested `GTask` while CLI export stays
   synchronous. Video candidates are scored directly in mapped RGBA buffers and

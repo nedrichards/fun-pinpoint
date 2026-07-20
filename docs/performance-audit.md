@@ -134,13 +134,22 @@ would usually add a readback rather than remove one.
 
 ### 4. Prototype modern GTK acceleration behind evidence gates
 
-For a static video or camera background, prototype a dedicated paintable child
-inside `GtkGraphicsOffload`. GTK can then pass a DMA-BUF directly to the Wayland
-compositor and automatically fall back to GSK when a format, clip, transform,
-opacity, overlay, transition, or platform prevents offload. Pinpoint's text and
-shading must remain visually identical, and transitions should continue through
-the normal GSK path. Validate with `GDK_DEBUG=offload,dmabuf`, Sysprof display
-timings, and battery measurements before keeping the extra widget path.
+Stable video and camera backgrounds now use a dedicated paintable child inside
+`GtkGraphicsOffload`. GTK can pass a compatible DMA-BUF directly to the Wayland
+compositor and automatically falls back to GSK when a format, colour state,
+clip, transform, opacity, overlay, transition, or platform prevents offload.
+Pinpoint's text and shading remain in their existing GSK path, transitions
+explicitly disable the offload child, and physical-pixel alignment avoids an
+otherwise common fractional-scale rejection.
+
+A live `GDK_DEBUG=offload,dmabuf` run confirmed a Wayland subsurface and NV12
+DMA-BUF negotiation from `vavp9dec` through `gtk4paintablesink`. It also made the
+limits concrete: window chrome and slide overlays lower the candidate, and the
+current compositor rejected the unobscured fullscreen frame because it lacked
+colour management for the video's non-default colour state. The implementation
+therefore remains opportunistic and must not be described as universal direct
+scanout. Sysprof display timings and battery measurements remain part of the
+separate hardware-validation task.
 
 GTK 4.22's `GtkSvg` is a GTK-native SVG paintable and is worth a focused
 prototype for self-contained static SVGs. It implements a documented subset of
@@ -148,10 +157,12 @@ SVG, while Pinpoint currently relies on librsvg for broad historical
 compatibility and external-resource handling. Use it only if the compatibility
 and pixel suites can select a reliable fast path and retain librsvg fallback.
 
-Use the GTK 4.22 `gtk-interface-reduced-motion` preference in addition to the
-older all-animations switch when deciding whether to suppress slide motion.
-This is primarily an accessibility modernization, with the incidental benefit
-of eliminating transition work for users who request reduced motion.
+The renderer now uses GTK 4.22's `gtk-interface-reduced-motion` preference in
+addition to the older all-animations switch when deciding whether to suppress
+slide motion. It emits one informational message per process when that path is
+first used, making the intentional immediate slide change visible in bug
+reports. This is primarily an accessibility modernization, with the incidental
+benefit of eliminating transition work for users who request reduced motion.
 
 ### 5. Keep page-curl experiments tied to hardware traces
 

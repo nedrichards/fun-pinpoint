@@ -41,10 +41,24 @@ kept VA-API decoding but negotiated system-memory NV12 through
 `GskGLRenderer`. These observations prove both paths on that machine; they are
 not hard-coded requirements for other drivers.
 
-The [whole-codebase performance audit](performance-audit.md) identifies a
-future `GtkGraphicsOffload` prototype for static video and camera slides. It
-must retain this negotiated sink path and normal GSK fallback; Pinpoint should
-not implement a second application-owned DMA-BUF importer.
+When a video or camera slide is stable, Pinpoint presents the sink paintable in
+a dedicated `GtkGraphicsOffload` child. Its allocation follows the authored
+background scale and position and is nudged by at most a few logical pixels to
+land on physical-pixel boundaries at fractional output scales. Transitions,
+blanking, and teardown detach the child; transition frames keep using the normal
+GSK composition path. GTK also falls back automatically when clipping, an
+overlay, a transform, a format, a colour state, the display backend, or the
+compositor prevents offload. Pinpoint does not implement a second DMA-BUF
+importer.
+
+The live Wayland probe used `tests/fixtures/offload-fullscreen.pin`. GTK created
+a subsurface and the bundled VP9 video negotiated NV12 DMA-BUF from `vavp9dec`
+to `gtk4paintablesink`. A normal decorated window was lowered for overlapping
+nodes and fractional device coordinates. After physical-pixel alignment, the
+unobscured fullscreen candidate reached the final format check but the current
+compositor rejected its non-default video colour state because it did not offer
+the required colour-management path. This is a working opportunistic fast path,
+not evidence that every video frame bypasses GSK on this machine.
 
 The portable input contract is intentionally narrower than all formats which
 GStreamer may decode. See [supported media formats](media-formats.md) for the
@@ -107,8 +121,8 @@ pipeline.
 ## Observing the negotiated path
 
 Set the `pinpoint-media` debug domain to report the active GDK backend, GSK
-renderer, output scale, negotiated video caps and memory features, and the
-elements selected by `playbin3`:
+renderer, output scale, offload configuration, negotiated video caps and memory
+features, and the elements selected by `playbin3`:
 
 ```sh
 G_MESSAGES_DEBUG=pinpoint-media _build/src/pinpoint presentation.pin
@@ -126,9 +140,9 @@ sink and a hardware decoder such as a `va*dec` element. System-memory caps are
 valid fallbacks, not proof of a bug: codec, driver, modifier, renderer, and
 cross-device compatibility can all require a copy.
 
-Useful GTK diagnostics include `GSK_DEBUG=renderer,fallback,cache` and
-`GDK_DISABLE=dmabuf` for an intentional comparison run. Do not ship either as
-an application default.
+Useful GTK diagnostics include `GDK_DEBUG=offload,dmabuf`,
+`GSK_DEBUG=renderer,fallback,cache`, and `GDK_DISABLE=dmabuf` for an intentional
+comparison run. Do not ship any of them as an application default.
 
 ## Hardware validation procedure
 

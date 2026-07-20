@@ -59,8 +59,10 @@ The [whole-codebase performance audit](performance-audit.md) maps every known
 copy boundary. Its production work removes speaker idle work, asynchronously
 prefetches watched and byte-bounded raster assets, shares parsed SVG sources,
 moves interactive PDF export off the GTK thread, and scores thumbnail
-candidates without copying them. Remaining PDF memory bounds and GTK graphics
-offload work stay evidence-gated in the backlog.
+candidates without copying them. Stable media backgrounds now use GTK's
+opportunistic compositor-offload path with automatic GSK fallback; remaining
+PDF memory bounds and the GTK-native SVG comparison stay evidence-gated in the
+backlog.
 
 ## Page-curl work avoided
 

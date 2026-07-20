@@ -34,6 +34,7 @@ void       pp_stage_set_blank (PpStage  *self,
                                gboolean  blank);
 gboolean   pp_stage_get_blank (PpStage *self);
 gboolean   pp_stage_is_transitioning (PpStage *self);
+gboolean   pp_stage_is_media_offload_configured (PpStage *self);
 void       pp_stage_set_media_enabled (PpStage  *self,
                                        gboolean  enabled);
 void       pp_stage_set_accessible_context (PpStage    *self,

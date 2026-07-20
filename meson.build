@@ -21,7 +21,7 @@ pinpoint_tagline = 'Excellent presentations for hackers'
 pinpoint_version = meson.project_version()
 
 glib_req = '>= 2.78'
-gtk_req = '>= 4.14'
+gtk_req = '>= 4.22'
 
 glib_dep = dependency('glib-2.0', version: glib_req)
 gio_dep = dependency('gio-2.0', version: glib_req)
