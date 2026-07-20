@@ -10,7 +10,7 @@ run.
 
 The GNOME 50 SDK used for the audit contains GLib 2.88.2, GTK 4.22.4,
 libadwaita 1.9.2, GStreamer 1.26.11, librsvg 2.62.3, Cairo 1.18.4, and Pango
-1.57.1. The normal 13-test SDK suite and the GCC 15 `-fanalyzer`/strict-warning
+1.57.1. The normal 14-test SDK suite and the GCC 15 `-fanalyzer`/strict-warning
 gate pass. The existing page-curl benchmark remains comfortably bounded at
 about 0.153 ms of CPU time per generated curved mesh on this machine; that
 number does not include texture readback, upload, composition, or display
@@ -45,18 +45,20 @@ The main opportunities are around that rendering core:
 
 The first production batch landed with this audit. Speaker previews now select
 slides without resetting their presentation, and the 50 ms timing source is
-owned only while timing is active. Background identity and content type are
-cached; audience and previews share an eight-entry raster-texture LRU which is
-preserved across text-only reloads. Every referenced image, SVG, video, or
-legacy transition file has a `GFileMonitor`, so replacement invalidates the
-matching render/media state without reparsing the `.pin` file.
+owned only while timing is active. The follow-up asset-store batch decodes and
+prefetches current/adjacent raster images through cancellable `GTask` workers.
+Audience and previews share a 64 MiB RGBA-equivalent decoded-texture LRU and one parsed librsvg
+handle per source while retaining size-specific vector nodes. Completed entries
+survive text-only reloads; obsolete task results are discarded on reload or
+final stage shutdown. Every referenced image, SVG, video, or legacy transition
+file has a `GFileMonitor`, so replacement invalidates the matching render/media
+state without reparsing the `.pin` file.
 
 Interactive PDF export now runs outside GTK's main thread, while CLI export
 remains synchronous. Video thumbnail candidates are scored directly in their
 mapped `GstVideoFrame`; only the selected `GstSample` is converted to a pixbuf.
-The remaining asset/PDF work is asynchronous texture prefetch, shared parsed
-SVG sources, explicit byte/image bounds, export cancellation in the UI, and an
-export-resolution bound. Those remain in the central backlog.
+The remaining PDF work is export cancellation in the UI, an export-resolution
+bound, and bounded decoded-image retention. Those remain in the central backlog.
 
 ## Copy and acceleration map
 
@@ -65,8 +67,8 @@ export-resolution bound. Those remain in the central backlog.
 | Presentation source | `g_file_load_contents()` allocates the input and the parser duplicates it into the retained source. Defaults strings are copied into each slide. | Real copies, but normally small and not a priority. |
 | Asset classification | Up to 4 KiB is opened and read for every slide background during every parse, including repeated references to the same file. | Redundant I/O; classify each unique resolved asset once. |
 | Asset identity in snapshots | Image and video snapshots repeatedly create a `GFile`, allocate its URI, and hash that URI, including once per video frame. | Avoidable main-thread allocation in a hot path. Store resolved asset identity in a presentation asset record. |
-| Raster image display | `gdk_texture_new_from_file()` decodes once per stage and URI, then GSK scales the immutable texture without an application-side per-frame pixel copy. | Correct rendering path, but synchronous first use, multiplied across stages, cleared on reload, and retained without a bound. |
-| SVG display | librsvg parses and records a cached Cairo/GSK node for each slide, stage, and size. | Quality-correct and static after construction, but repeated files are reparsed and speaker stages duplicate work. |
+| Raster image display | Cancellable `GTask` workers deduplicate and prefetch current/adjacent `GdkTexture` objects into a shared 64 MiB RGBA-equivalent decoded-size LRU; GSK scales them without an application-side per-frame copy. | Keep. The bundled raster set is about 7.15 MiB by the same estimate, while eight 4K RGBA images would be about 253 MiB, validating the byte rather than item bound. |
+| SVG display | The shared store parses one librsvg handle per URI; stages record size-specific Cairo/GSK nodes from that immutable source. | Keep. This preserves vector output quality while avoiding repeated parsing across audience and previews. |
 | Text display | Pango shaping and the GSK text node are cached per slide, size, scale, and Pango context serial. | Keep. There is no useful application-side glyph rasterisation to add. |
 | Ordinary transitions | GSK transform and opacity nodes wrap the cached foreground components. | Keep on GSK; no CPU readback is present. A whole-static-slide node cache is only worth considering after traces show wrapper construction matters. |
 | File video | `playbin3` feeds `gtk4paintablesink`; no RGB filter or application map/copy is inserted. | Already zero-copy eligible. The GNOME 50 sink advertises DMA-BUF, GLMemory, native YUV system memory, and RGB fallbacks. |
@@ -92,6 +94,10 @@ This is low risk, does not change output, and should be the first performance
 implementation.
 
 ### 2. Introduce a watched, bounded presentation asset store
+
+Implemented on 20 July 2026 with cancellable asynchronous raster prefetch,
+shared parsed SVG sources, targeted re-prefetch after invalidation, and a
+64 MiB RGBA-equivalent decoded-texture LRU.
 
 Resolve every unique background to a `GFile` and stable key once. Store content
 classification and immutable decoded sources there, and let the audience and

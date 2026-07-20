@@ -132,22 +132,44 @@ pixel_test = executable(
 pixel_fixture = files('fixtures/pixel-reference.pin')
 svg_pixel_fixture = files('fixtures/svg-quality.pin')
 raster_cache_fixture = files('fixtures/raster-cache.pin')
+asset_store_fixture = files('fixtures/asset-store.pin')
 test(
   'pixels-800x600',
   pixel_test,
-  args: [pixel_fixture, svg_pixel_fixture, '800', '600', raster_cache_fixture],
+  args: [
+    pixel_fixture,
+    svg_pixel_fixture,
+    '800',
+    '600',
+    raster_cache_fixture,
+    asset_store_fixture,
+  ],
   timeout: 10,
 )
 test(
   'pixels-widescreen',
   pixel_test,
-  args: [pixel_fixture, svg_pixel_fixture, '1280', '720', raster_cache_fixture],
+  args: [
+    pixel_fixture,
+    svg_pixel_fixture,
+    '1280',
+    '720',
+    raster_cache_fixture,
+    asset_store_fixture,
+  ],
   timeout: 10,
 )
 test(
   'pixels-hidpi',
   pixel_test,
-  args: [pixel_fixture, svg_pixel_fixture, '800', '600', raster_cache_fixture],
+  args: [
+    pixel_fixture,
+    svg_pixel_fixture,
+    '800',
+    '600',
+    raster_cache_fixture,
+    asset_store_fixture,
+  ],
   env: { 'GDK_SCALE': '2' },
   timeout: 10,
 )

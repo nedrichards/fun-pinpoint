@@ -53,20 +53,29 @@ or runtime-declared codec-extension fallback requirement.
 
 ### Still images and SVG
 
-Raster images are loaded as immutable `GdkTexture` objects into an eight-entry
-LRU shared by the audience and all speaker previews. The cache survives
-text-only presentation reloads, and a `GFileMonitor` invalidates an image when
-its source file changes. GDK retains colour-state metadata. Rendering uses an
-explicit linear filter when enlarging and a trilinear filter when reducing an
-image, avoiding the aliasing produced by single-level minification.
+Raster images are decoded off the GTK thread as immutable `GdkTexture` objects.
+The current and adjacent slides are prefetched through deduplicated `GTask`
+workers; presentation reloads discard obsolete results, and destroying the last
+stage detaches the store without retaining the widget. Audience and speaker
+previews share the completed textures in a 64 MiB RGBA-equivalent decoded-size
+LRU. The bundled
+introduction's three raster images occupy about 7.15 MiB by this estimate, while
+eight 3840×2160 RGBA textures would occupy about 253 MiB, so a byte budget tracks
+the material cost more closely than the former eight-image limit. The cache
+survives text-only presentation reloads, and a `GFileMonitor` invalidates and
+immediately re-prefetches an image when its source file changes.
 
-SVG backgrounds are loaded through librsvg and cached as `GskCairoNode` vector
-recordings for each slide and stage size. They are not decoded to a texture at
-the SVG's nominal width and then enlarged. The renderer can therefore rasterise
-the vector content for the actual output scale while repeated video-frame
-snapshots reuse the same node.
-An SVG source-file change invalidates those nodes immediately; sharing a parsed
-source across differently sized stages remains follow-up work.
+GDK retains colour-state metadata. Rendering uses an explicit linear filter
+when enlarging and a trilinear filter when reducing an image, avoiding the
+aliasing produced by single-level minification.
+
+SVG backgrounds are loaded through librsvg. The shared asset store parses each
+source file once, while each stage retains its own `GskCairoNode` vector
+recording for the slide and output size. The SVG is not decoded to a texture at
+its nominal width and then enlarged, so the renderer can rasterise vector
+content for the actual output scale while repeated video-frame snapshots reuse
+the size-specific node. An SVG source-file change invalidates the shared handle
+and all affected stage nodes immediately.
 
 ### Text and ordinary transitions
 

@@ -15,7 +15,7 @@
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
 #define CAMERA_INTERFACE "org.freedesktop.portal.Camera"
 #define REQUEST_INTERFACE "org.freedesktop.portal.Request"
-#define MAX_CACHED_TEXTURES 8
+#define DEFAULT_TEXTURE_CACHE_BYTES (64 * 1024 * 1024)
 
 typedef struct
 {
@@ -42,7 +42,7 @@ typedef struct
 
 typedef struct
 {
-  GFile *file;
+  char *uri;
   float width;
   float height;
   GskRenderNode *node;
@@ -58,14 +58,46 @@ typedef struct
 {
   GdkTexture *texture;
   guint64 last_used;
+  guint64 bytes;
 } PpCachedTexture;
 
 typedef struct
 {
+  GFile *file;
+  RsvgHandle *handle;
+  double intrinsic_width;
+  double intrinsic_height;
+} PpCachedSvgSource;
+
+typedef struct
+{
+  guint64 token;
+  guint64 last_used;
+} PpPendingTexture;
+
+typedef struct
+{
+  struct _PpAssetCache *cache;
+  GFile *file;
+  char *uri;
+  guint64 token;
+} PpTextureTask;
+
+typedef struct _PpAssetCache
+{
   gint ref_count;
   GHashTable *resolved;
   GHashTable *textures;
+  GHashTable *pending_textures;
+  GHashTable *failed_textures;
+  GHashTable *svg_sources;
+  GPtrArray *stages;
+  PpPresentation *presentation;
+  GCancellable *load_cancellable;
   guint64 use_serial;
+  guint64 load_serial;
+  guint64 texture_bytes;
+  guint64 texture_budget;
 } PpAssetCache;
 
 typedef PpTransitionLayerState LayerState;
@@ -123,6 +155,9 @@ enum
 
 static guint signals[N_SIGNALS];
 
+static gboolean presentations_share_file (const PpPresentation *a,
+                                           const PpPresentation *b);
+
 static void
 resolved_asset_free (PpResolvedAsset *asset)
 {
@@ -142,6 +177,16 @@ cached_texture_free (PpCachedTexture *cached)
   g_free (cached);
 }
 
+static void
+cached_svg_source_free (PpCachedSvgSource *cached)
+{
+  if (cached == NULL)
+    return;
+  g_clear_object (&cached->file);
+  g_clear_object (&cached->handle);
+  g_free (cached);
+}
+
 static PpAssetCache *
 asset_cache_new (void)
 {
@@ -158,6 +203,22 @@ asset_cache_new (void)
     g_str_equal,
     g_free,
     (GDestroyNotify) cached_texture_free);
+  cache->pending_textures = g_hash_table_new_full (g_str_hash,
+                                                    g_str_equal,
+                                                    g_free,
+                                                    g_free);
+  cache->failed_textures = g_hash_table_new_full (g_str_hash,
+                                                   g_str_equal,
+                                                   g_free,
+                                                   NULL);
+  cache->svg_sources = g_hash_table_new_full (
+    g_str_hash,
+    g_str_equal,
+    g_free,
+    (GDestroyNotify) cached_svg_source_free);
+  cache->stages = g_ptr_array_new ();
+  cache->load_cancellable = g_cancellable_new ();
+  cache->texture_budget = DEFAULT_TEXTURE_CACHE_BYTES;
   return cache;
 }
 
@@ -173,16 +234,71 @@ asset_cache_unref (PpAssetCache *cache)
 {
   if (cache == NULL || !g_atomic_int_dec_and_test (&cache->ref_count))
     return;
+  g_cancellable_cancel (cache->load_cancellable);
+  g_clear_pointer (&cache->presentation, pp_presentation_free);
   g_hash_table_unref (cache->resolved);
   g_hash_table_unref (cache->textures);
+  g_hash_table_unref (cache->pending_textures);
+  g_hash_table_unref (cache->failed_textures);
+  g_hash_table_unref (cache->svg_sources);
+  g_ptr_array_unref (cache->stages);
+  g_object_unref (cache->load_cancellable);
   g_free (cache);
 }
 
 static void
-asset_cache_clear (PpAssetCache *cache)
+asset_cache_cancel_loads (PpAssetCache *cache)
 {
+  g_cancellable_cancel (cache->load_cancellable);
+  g_hash_table_remove_all (cache->pending_textures);
+  g_clear_object (&cache->load_cancellable);
+  cache->load_cancellable = g_cancellable_new ();
+}
+
+static void
+asset_cache_clear_decoded (PpAssetCache *cache)
+{
+  cache->texture_bytes = 0;
   g_hash_table_remove_all (cache->resolved);
   g_hash_table_remove_all (cache->textures);
+  g_hash_table_remove_all (cache->failed_textures);
+  g_hash_table_remove_all (cache->svg_sources);
+}
+
+static void
+asset_cache_prepare_presentation (PpAssetCache  *cache,
+                                  PpPresentation *presentation)
+{
+  gboolean keep_decoded;
+
+  if (cache->presentation == presentation)
+    return;
+  keep_decoded = presentations_share_file (cache->presentation, presentation);
+  asset_cache_cancel_loads (cache);
+  if (!keep_decoded)
+    asset_cache_clear_decoded (cache);
+  else
+    g_hash_table_remove_all (cache->failed_textures);
+  g_clear_pointer (&cache->presentation, pp_presentation_free);
+  cache->presentation = pp_presentation_ref (presentation);
+}
+
+static void
+asset_cache_attach_stage (PpAssetCache *cache,
+                          PpStage      *stage)
+{
+  if (g_ptr_array_find (cache->stages, stage, NULL))
+    return;
+  g_ptr_array_add (cache->stages, stage);
+}
+
+static void
+asset_cache_detach_stage (PpAssetCache *cache,
+                          PpStage      *stage)
+{
+  g_ptr_array_remove (cache->stages, stage);
+  if (cache->stages->len == 0)
+    asset_cache_cancel_loads (cache);
 }
 
 static PpResolvedAsset *
@@ -212,7 +328,7 @@ static void
 trim_texture_cache (PpAssetCache    *cache,
                     PpCachedTexture *keep)
 {
-  while (g_hash_table_size (cache->textures) > MAX_CACHED_TEXTURES)
+  while (cache->texture_bytes > cache->texture_budget)
     {
       GHashTableIter iter;
       gpointer key;
@@ -233,8 +349,183 @@ trim_texture_cache (PpAssetCache    *cache,
         }
       if (oldest_key == NULL)
         break;
+      {
+        PpCachedTexture *oldest = g_hash_table_lookup (cache->textures,
+                                                       oldest_key);
+
+        cache->texture_bytes -= oldest->bytes;
+      }
       g_hash_table_remove (cache->textures, oldest_key);
     }
+}
+
+static void
+remove_cached_texture (PpAssetCache *cache,
+                       const char   *uri)
+{
+  PpCachedTexture *cached = g_hash_table_lookup (cache->textures, uri);
+
+  if (cached == NULL)
+    return;
+  cache->texture_bytes -= cached->bytes;
+  g_hash_table_remove (cache->textures, uri);
+}
+
+static guint64
+texture_decoded_bytes (GdkTexture *texture)
+{
+  guint64 width = (guint64) gdk_texture_get_width (texture);
+  guint64 height = (guint64) gdk_texture_get_height (texture);
+
+  if (width > G_MAXUINT64 / MAX (height, 1) / 4)
+    return G_MAXUINT64;
+  return width * height * 4;
+}
+
+static void
+queue_asset_redraws (PpAssetCache *cache)
+{
+  for (guint i = 0; i < cache->stages->len; i++)
+    gtk_widget_queue_draw (GTK_WIDGET (g_ptr_array_index (cache->stages, i)));
+}
+
+static void
+texture_task_free (PpTextureTask *task)
+{
+  if (task == NULL)
+    return;
+  asset_cache_unref (task->cache);
+  g_clear_object (&task->file);
+  g_free (task->uri);
+  g_free (task);
+}
+
+static void
+load_texture_thread (GTask        *task,
+                     gpointer      source_object,
+                     gpointer      task_data,
+                     GCancellable *cancellable)
+{
+  PpTextureTask *load = task_data;
+  g_autoptr (GError) error = NULL;
+  GdkTexture *texture;
+
+  (void) source_object;
+  (void) cancellable;
+  if (g_task_return_error_if_cancelled (task))
+    return;
+  texture = gdk_texture_new_from_file (load->file, &error);
+  if (texture == NULL)
+    {
+      g_task_return_error (task, g_steal_pointer (&error));
+      return;
+    }
+  if (g_task_return_error_if_cancelled (task))
+    {
+      g_object_unref (texture);
+      return;
+    }
+  g_task_return_pointer (task, texture, g_object_unref);
+}
+
+static void
+texture_loaded_cb (GObject      *source_object,
+                   GAsyncResult *result,
+                   gpointer      user_data)
+{
+  GTask *task = G_TASK (result);
+  PpTextureTask *load = g_task_get_task_data (task);
+  PpAssetCache *cache = load->cache;
+  PpPendingTexture *pending;
+  g_autoptr (GError) error = NULL;
+  GdkTexture *texture;
+
+  (void) source_object;
+  (void) user_data;
+  texture = g_task_propagate_pointer (task, &error);
+  pending = g_hash_table_lookup (cache->pending_textures, load->uri);
+  if (pending == NULL || pending->token != load->token)
+    {
+      g_clear_object (&texture);
+      return;
+    }
+  if (texture == NULL)
+    {
+      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        {
+          g_warning ("Unable to load background %s: %s",
+                     load->uri,
+                     error->message);
+          g_hash_table_add (cache->failed_textures, g_strdup (load->uri));
+        }
+      g_hash_table_remove (cache->pending_textures, load->uri);
+      return;
+    }
+  {
+    PpCachedTexture *cached = g_new0 (PpCachedTexture, 1);
+
+    cached->texture = texture;
+    cached->last_used = pending->last_used;
+    cached->bytes = texture_decoded_bytes (texture);
+    cache->texture_bytes += cached->bytes;
+    g_hash_table_insert (cache->textures, g_strdup (load->uri), cached);
+    g_hash_table_remove (cache->pending_textures, load->uri);
+    trim_texture_cache (cache, cached);
+  }
+  queue_asset_redraws (cache);
+}
+
+static GdkTexture *
+request_texture (PpStage              *self,
+                 const PpPresentation *presentation,
+                 const char           *asset,
+                 int                   priority)
+{
+  PpResolvedAsset *resolved = resolve_asset (self, presentation, asset);
+  PpCachedTexture *cached;
+  PpPendingTexture *pending;
+  PpTextureTask *load;
+  GTask *task;
+
+  if (resolved == NULL)
+    return NULL;
+  cached = g_hash_table_lookup (self->assets->textures, resolved->uri);
+  if (cached != NULL)
+    {
+      cached->last_used = ++self->assets->use_serial;
+      return cached->texture;
+    }
+  if (g_hash_table_contains (self->assets->failed_textures, resolved->uri))
+    return NULL;
+  pending = g_hash_table_lookup (self->assets->pending_textures, resolved->uri);
+  if (pending != NULL)
+    {
+      if (priority <= G_PRIORITY_DEFAULT)
+        pending->last_used = ++self->assets->use_serial;
+      return NULL;
+    }
+
+  pending = g_new0 (PpPendingTexture, 1);
+  pending->token = ++self->assets->load_serial;
+  pending->last_used = ++self->assets->use_serial;
+  g_hash_table_insert (self->assets->pending_textures,
+                       g_strdup (resolved->uri),
+                       pending);
+  load = g_new0 (PpTextureTask, 1);
+  load->cache = asset_cache_ref (self->assets);
+  load->file = g_object_ref (resolved->file);
+  load->uri = g_strdup (resolved->uri);
+  load->token = pending->token;
+  task = g_task_new (NULL,
+                     self->assets->load_cancellable,
+                     texture_loaded_cb,
+                     NULL);
+  g_task_set_task_data (task, load, (GDestroyNotify) texture_task_free);
+  g_task_set_priority (task, priority);
+  g_task_set_return_on_cancel (task, TRUE);
+  g_task_run_in_thread (task, load_texture_thread);
+  g_object_unref (task);
+  return NULL;
 }
 
 static gboolean
@@ -320,7 +611,7 @@ cached_svg_free (PpCachedSvg *cached)
 {
   if (cached == NULL)
     return;
-  g_clear_object (&cached->file);
+  g_free (cached->uri);
   g_clear_pointer (&cached->node, gsk_render_node_unref);
   g_free (cached);
 }
@@ -894,34 +1185,42 @@ load_texture (PpStage              *self,
               const PpPresentation *presentation,
               const char           *asset)
 {
-  g_autoptr (GError) error = NULL;
-  PpResolvedAsset *resolved = resolve_asset (self, presentation, asset);
-  PpCachedTexture *cached;
+  return request_texture (self, presentation, asset, G_PRIORITY_DEFAULT);
+}
 
-  if (resolved == NULL)
-    return NULL;
-  cached = g_hash_table_lookup (self->assets->textures, resolved->uri);
-  if (cached != NULL)
-    {
-      cached->last_used = ++self->assets->use_serial;
-      return cached->texture;
-    }
+static void
+prefetch_raster_slide (PpStage *self,
+                       guint    slide_index,
+                       int      priority)
+{
+  const PpSlide *slide;
 
-  cached = g_new0 (PpCachedTexture, 1);
-  cached->texture = gdk_texture_new_from_file (resolved->file, &error);
-  if (cached->texture == NULL)
-    {
-      g_warning ("Unable to load background %s: %s", asset, error->message);
-      g_free (cached);
-      return NULL;
-    }
+  if (self->presentation == NULL ||
+      slide_index >= pp_presentation_get_n_slides (self->presentation))
+    return;
+  slide = pp_presentation_get_slide (self->presentation, slide_index);
+  if (slide->background_type == PP_BACKGROUND_IMAGE)
+    request_texture (self,
+                     self->presentation,
+                     slide->background,
+                     priority);
+}
 
-  cached->last_used = ++self->assets->use_serial;
-  g_hash_table_insert (self->assets->textures,
-                       g_strdup (resolved->uri),
-                       cached);
-  trim_texture_cache (self->assets, cached);
-  return cached->texture;
+static void
+prefetch_raster_working_set (PpStage *self)
+{
+  if (self->presentation == NULL)
+    return;
+  if (self->current_slide > 0)
+    prefetch_raster_slide (self,
+                           self->current_slide - 1,
+                           G_PRIORITY_DEFAULT_IDLE);
+  prefetch_raster_slide (self,
+                         self->current_slide + 1,
+                         G_PRIORITY_DEFAULT_IDLE);
+  prefetch_raster_slide (self,
+                         self->current_slide,
+                         G_PRIORITY_DEFAULT);
 }
 
 static PpMedia *
@@ -1275,6 +1574,46 @@ parse_color (const char    *value,
   return color;
 }
 
+static PpCachedSvgSource *
+load_svg_source (PpStage              *self,
+                 const PpPresentation *presentation,
+                 const char           *asset)
+{
+  PpResolvedAsset *resolved = resolve_asset (self, presentation, asset);
+  PpCachedSvgSource *source;
+  g_autoptr (GError) error = NULL;
+
+  if (resolved == NULL)
+    return NULL;
+  source = g_hash_table_lookup (self->assets->svg_sources, resolved->uri);
+  if (source != NULL)
+    return source;
+  source = g_new0 (PpCachedSvgSource, 1);
+  source->file = g_object_ref (resolved->file);
+  source->handle = rsvg_handle_new_from_gfile_sync (resolved->file,
+                                                    RSVG_HANDLE_FLAGS_NONE,
+                                                    NULL,
+                                                    &error);
+  if (source->handle == NULL)
+    {
+      g_warning ("Unable to load SVG background: %s", error->message);
+      cached_svg_source_free (source);
+      return NULL;
+    }
+  if (!rsvg_handle_get_intrinsic_size_in_pixels (source->handle,
+                                                 &source->intrinsic_width,
+                                                 &source->intrinsic_height) ||
+      source->intrinsic_width <= 0.0 || source->intrinsic_height <= 0.0)
+    {
+      source->intrinsic_width = 0.0;
+      source->intrinsic_height = 0.0;
+    }
+  g_hash_table_insert (self->assets->svg_sources,
+                       g_strdup (resolved->uri),
+                       source);
+  return source;
+}
+
 static GskRenderNode *
 load_svg_node (PpStage              *self,
                const PpPresentation *presentation,
@@ -1284,7 +1623,7 @@ load_svg_node (PpStage              *self,
 {
   PpCachedSvg *cached = g_hash_table_lookup (self->svg_nodes, slide);
   PpResolvedAsset *resolved;
-  RsvgHandle *handle = NULL;
+  PpCachedSvgSource *source;
   g_autoptr (GError) error = NULL;
   GtkSnapshot *svg_snapshot;
   GskRenderNode *node;
@@ -1302,19 +1641,12 @@ load_svg_node (PpStage              *self,
   resolved = resolve_asset (self, presentation, slide->background);
   if (resolved == NULL)
     return NULL;
-  handle = rsvg_handle_new_from_gfile_sync (resolved->file,
-                                            RSVG_HANDLE_FLAGS_NONE,
-                                            NULL,
-                                            &error);
-  if (handle == NULL)
-    {
-      g_warning ("Unable to load SVG background: %s", error->message);
-      return NULL;
-    }
-  if (!rsvg_handle_get_intrinsic_size_in_pixels (handle,
-                                                 &intrinsic_width,
-                                                 &intrinsic_height) ||
-      intrinsic_width <= 0.0 || intrinsic_height <= 0.0)
+  source = load_svg_source (self, presentation, slide->background);
+  if (source == NULL)
+    return NULL;
+  intrinsic_width = source->intrinsic_width;
+  intrinsic_height = source->intrinsic_height;
+  if (intrinsic_width <= 0.0 || intrinsic_height <= 0.0)
     {
       intrinsic_width = width;
       intrinsic_height = height;
@@ -1334,11 +1666,13 @@ load_svg_node (PpStage              *self,
   cairo_scale (cr,
                rect.width / intrinsic_width,
                rect.height / intrinsic_height);
-  rendered = rsvg_handle_render_document (handle, cr, &viewport, &error);
+  rendered = rsvg_handle_render_document (source->handle,
+                                          cr,
+                                          &viewport,
+                                          &error);
   cairo_restore (cr);
   cairo_destroy (cr);
   node = gtk_snapshot_free_to_node (svg_snapshot);
-  g_clear_object (&handle);
   if (!rendered)
     {
       g_warning ("Unable to render SVG background: %s", error->message);
@@ -1347,7 +1681,7 @@ load_svg_node (PpStage              *self,
     }
 
   cached = g_new0 (PpCachedSvg, 1);
-  cached->file = g_object_ref (resolved->file);
+  cached->uri = g_strdup (resolved->uri);
   cached->width = width;
   cached->height = height;
   cached->node = node;
@@ -1942,7 +2276,11 @@ pp_stage_dispose (GObject *object)
       self->camera_response_subscription = 0;
     }
   g_clear_pointer (&self->presentation, pp_presentation_free);
-  g_clear_pointer (&self->assets, asset_cache_unref);
+  if (self->assets != NULL)
+    {
+      asset_cache_detach_stage (self->assets, self);
+      g_clear_pointer (&self->assets, asset_cache_unref);
+    }
   g_clear_pointer (&self->text_nodes, g_hash_table_unref);
   g_clear_pointer (&self->svg_nodes, g_hash_table_unref);
   g_clear_pointer (&self->media, g_hash_table_unref);
@@ -2001,6 +2339,7 @@ static void
 pp_stage_init (PpStage *self)
 {
   self->assets = asset_cache_new ();
+  asset_cache_attach_stage (self->assets, self);
   self->text_nodes = g_hash_table_new_full (g_direct_hash,
                                             g_direct_equal,
                                             NULL,
@@ -2053,14 +2392,13 @@ pp_stage_set_presentation (PpStage        *self,
                            guint           initial_slide)
 {
   guint count;
-  gboolean keep_assets;
 
   g_return_if_fail (PP_IS_STAGE (self));
   g_return_if_fail (presentation != NULL);
 
   count = pp_presentation_get_n_slides (presentation);
   g_return_if_fail (count > 0);
-  keep_assets = presentations_share_file (self->presentation, presentation);
+  asset_cache_prepare_presentation (self->assets, presentation);
 
   if (self->tick_id != 0)
     {
@@ -2074,13 +2412,12 @@ pp_stage_set_presentation (PpStage        *self,
   self->presentation = presentation;
   self->current_slide = MIN (initial_slide, count - 1);
   self->previous_slide = self->current_slide;
-  if (!keep_assets)
-    asset_cache_clear (self->assets);
   g_hash_table_remove_all (self->text_nodes);
   g_hash_table_remove_all (self->svg_nodes);
   g_hash_table_remove_all (self->media);
   g_hash_table_remove_all (self->legacy_transitions);
   g_hash_table_remove_all (self->failed_transitions);
+  prefetch_raster_working_set (self);
   update_accessibility (self);
   gtk_widget_queue_draw (GTK_WIDGET (self));
   g_signal_emit (self, signals[SLIDE_CHANGED], 0, self->current_slide);
@@ -2120,6 +2457,7 @@ pp_stage_set_slide (PpStage *self,
   stop_all_media (self);
   self->current_slide = slide;
   self->previous_slide = slide;
+  prefetch_raster_working_set (self);
   update_accessibility (self);
   gtk_widget_queue_draw (GTK_WIDGET (self));
   g_signal_emit (self, signals[SLIDE_CHANGED], 0, self->current_slide);
@@ -2141,6 +2479,7 @@ go_to_slide (PpStage  *self,
 
   self->previous_slide = self->current_slide;
   self->current_slide = target;
+  prefetch_raster_working_set (self);
   clear_page_curl (self);
   stop_all_media (self);
   self->backwards = backwards;
@@ -2305,8 +2644,38 @@ pp_stage_share_asset_cache (PpStage *self,
 
   if (self->assets == source->assets)
     return;
+  asset_cache_detach_stage (self->assets, self);
   asset_cache_unref (self->assets);
   self->assets = asset_cache_ref (source->assets);
+  asset_cache_attach_stage (self->assets, self);
+}
+
+void
+pp_stage_get_asset_store_stats (PpStage          *self,
+                                PpAssetStoreStats *stats)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  g_return_if_fail (stats != NULL);
+
+  *stats = (PpAssetStoreStats) {
+    .texture_count = g_hash_table_size (self->assets->textures),
+    .pending_texture_count = g_hash_table_size (
+      self->assets->pending_textures),
+    .texture_bytes = self->assets->texture_bytes,
+    .texture_budget = self->assets->texture_budget,
+    .svg_source_count = g_hash_table_size (self->assets->svg_sources),
+  };
+}
+
+void
+pp_stage_set_asset_texture_budget (PpStage *self,
+                                   guint64  bytes)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+  g_return_if_fail (bytes > 0);
+
+  self->assets->texture_budget = bytes;
+  trim_texture_cache (self->assets, NULL);
 }
 
 void
@@ -2322,14 +2691,17 @@ pp_stage_invalidate_asset (PpStage *self,
   g_return_if_fail (G_IS_FILE (file));
 
   uri = g_file_get_uri (file);
-  g_hash_table_remove (self->assets->textures, uri);
+  remove_cached_texture (self->assets, uri);
+  g_hash_table_remove (self->assets->pending_textures, uri);
+  g_hash_table_remove (self->assets->failed_textures, uri);
+  g_hash_table_remove (self->assets->svg_sources, uri);
   g_hash_table_remove (self->media, uri);
   g_hash_table_iter_init (&iter, self->svg_nodes);
   while (g_hash_table_iter_next (&iter, &key, &value))
     {
       PpCachedSvg *cached = value;
 
-      if (g_file_equal (cached->file, file))
+      if (g_str_equal (cached->uri, uri))
         g_hash_table_iter_remove (&iter);
     }
   g_hash_table_iter_init (&iter, self->legacy_transitions);
@@ -2350,5 +2722,6 @@ pp_stage_invalidate_asset (PpStage *self,
       if (transition_file != NULL && g_file_equal (transition_file, file))
         g_hash_table_iter_remove (&iter);
     }
+  prefetch_raster_working_set (self);
   gtk_widget_queue_draw (GTK_WIDGET (self));
 }

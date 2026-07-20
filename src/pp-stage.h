@@ -6,6 +6,15 @@
 
 G_BEGIN_DECLS
 
+typedef struct
+{
+  guint texture_count;
+  guint pending_texture_count;
+  guint64 texture_bytes;
+  guint64 texture_budget;
+  guint svg_source_count;
+} PpAssetStoreStats;
+
 #define PP_TYPE_STAGE (pp_stage_get_type ())
 G_DECLARE_FINAL_TYPE (PpStage, pp_stage, PP, STAGE, GtkWidget)
 
@@ -35,6 +44,10 @@ void       pp_stage_set_camera_device (PpStage    *self,
                                        const char *device);
 void       pp_stage_share_asset_cache (PpStage *self,
                                        PpStage *source);
+void       pp_stage_get_asset_store_stats (PpStage           *self,
+                                           PpAssetStoreStats *stats);
+void       pp_stage_set_asset_texture_budget (PpStage *self,
+                                              guint64  bytes);
 void       pp_stage_invalidate_asset (PpStage *self,
                                       GFile   *file);
 

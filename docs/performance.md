@@ -12,9 +12,12 @@ hardware.
   catching accidental extra deformation, sorting, or allocation work.
 - Completed transitions must remove their GTK frame-clock callback. A static
   slide therefore has no transition-driven redraw loop.
-- An idle or paused speaker view must own no 50 ms timing source. Raster cache
-  tests exercise sharing across audience/preview stages and redraw after
-  targeted invalidation; an atomic file-replacement test covers live monitors.
+- An idle or paused speaker view must own no 50 ms timing source. Asset-store
+  tests exercise asynchronous current/adjacent raster prefetch, sharing across
+  audience/preview stages, reload and shutdown cancellation, one parsed SVG
+  source across output sizes, a 64 MiB RGBA-equivalent decoded-texture budget,
+  and redraw after
+  targeted invalidation. An atomic file-replacement test covers live monitors.
 - The SDK-built executable, including embedded presentation assets, must remain
   at or below 3 MiB. The bundled VP9/Opus introduction video has a separate
   1.4 MiB budget.
@@ -53,10 +56,11 @@ caps diagnostics, text and image quality choices, and the remaining page-curl
 readback boundary.
 
 The [whole-codebase performance audit](performance-audit.md) maps every known
-copy boundary. Its first production batch removes speaker idle work, shares and
-watches bounded raster assets, moves interactive PDF export off the GTK thread,
-and scores thumbnail candidates without copying them. Remaining memory bounds,
-prefetch, and GTK graphics offload work stay evidence-gated in the backlog.
+copy boundary. Its production work removes speaker idle work, asynchronously
+prefetches watched and byte-bounded raster assets, shares parsed SVG sources,
+moves interactive PDF export off the GTK thread, and scores thumbnail
+candidates without copying them. Remaining PDF memory bounds and GTK graphics
+offload work stay evidence-gated in the backlog.
 
 ## Page-curl work avoided
 

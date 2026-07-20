@@ -28,6 +28,43 @@ run_loop_for (guint milliseconds)
   g_main_loop_run (loop);
 }
 
+static PpPresentation *
+load_presentation (const char *path)
+{
+  g_autoptr (GFile) file = g_file_new_for_path (path);
+  g_autoptr (GError) error = NULL;
+  PpPresentation *presentation = pp_presentation_load (file,
+                                                        FALSE,
+                                                        NULL,
+                                                        &error);
+
+  g_assert_no_error (error);
+  g_assert_nonnull (presentation);
+  return presentation;
+}
+
+static void
+wait_for_asset_loads (PpStage *stage,
+                      guint    timeout_ms)
+{
+  gint64 deadline = g_get_monotonic_time () + timeout_ms * G_TIME_SPAN_MILLISECOND;
+  PpAssetStoreStats stats;
+
+  do
+    {
+      while (g_main_context_iteration (NULL, FALSE))
+        ;
+      pp_stage_get_asset_store_stats (stage, &stats);
+      if (stats.pending_texture_count == 0)
+        return;
+      g_usleep (1000);
+    }
+  while (g_get_monotonic_time () < deadline);
+  g_error ("Asset store still had %u pending texture loads after %u ms",
+           stats.pending_texture_count,
+           timeout_ms);
+}
+
 static GdkTexture *
 snapshot_widget (GtkWidget *widget)
 {
@@ -181,6 +218,7 @@ test_shared_raster_cache (GtkApplication *application,
   GtkWindow *preview_window;
   GtkWidget *audience;
   GtkWidget *preview;
+  PpAssetStoreStats stats;
 
   presentation = pp_presentation_load (file, FALSE, NULL, &error);
   g_assert_no_error (error);
@@ -211,6 +249,9 @@ test_shared_raster_cache (GtkApplication *application,
   gtk_window_present (window);
   gtk_window_present (preview_window);
   run_loop_for (200);
+  wait_for_asset_loads (PP_STAGE (audience), 5000);
+  pp_stage_get_asset_store_stats (PP_STAGE (audience), &stats);
+  g_assert_cmpuint (stats.texture_count, ==, 1);
 
   first = snapshot_widget (audience);
   second = snapshot_widget (preview);
@@ -224,8 +265,13 @@ test_shared_raster_cache (GtkApplication *application,
     pp_stage_get_presentation (PP_STAGE (audience)), slide->background);
   pp_stage_invalidate_asset (PP_STAGE (audience), asset);
   pp_stage_invalidate_asset (PP_STAGE (preview), asset);
+  pp_stage_get_asset_store_stats (PP_STAGE (audience), &stats);
+  g_assert_cmpuint (stats.texture_count, ==, 0);
   gtk_widget_set_name (preview, "raster-preview-invalidated");
+  wait_for_asset_loads (PP_STAGE (audience), 5000);
   run_loop_for (100);
+  pp_stage_get_asset_store_stats (PP_STAGE (audience), &stats);
+  g_assert_cmpuint (stats.texture_count, ==, 1);
   g_clear_object (&second);
   second = snapshot_widget (preview);
   g_assert_nonnull (second);
@@ -233,6 +279,116 @@ test_shared_raster_cache (GtkApplication *application,
   gtk_window_destroy (window);
   gtk_window_destroy (preview_window);
   run_loop_for (100);
+}
+
+static void
+test_shared_svg_source (GtkApplication *application,
+                        const char     *fixture)
+{
+  g_autoptr (PpPresentation) presentation = load_presentation (fixture);
+  g_autoptr (GdkTexture) audience_texture = NULL;
+  g_autoptr (GdkTexture) preview_texture = NULL;
+  GtkWindow *audience_window = GTK_WINDOW (
+    gtk_application_window_new (application));
+  GtkWindow *preview_window = GTK_WINDOW (
+    gtk_application_window_new (application));
+  GtkWidget *audience = pp_stage_new ();
+  GtkWidget *preview = pp_stage_new ();
+  PpAssetStoreStats stats;
+
+  pp_stage_share_asset_cache (PP_STAGE (preview), PP_STAGE (audience));
+  pp_stage_set_presentation (PP_STAGE (audience),
+                             pp_presentation_ref (presentation),
+                             0);
+  pp_stage_set_presentation (PP_STAGE (preview),
+                             g_steal_pointer (&presentation),
+                             0);
+  gtk_widget_set_size_request (audience, 640, 480);
+  gtk_widget_set_size_request (preview, 320, 240);
+  gtk_window_set_child (audience_window, audience);
+  gtk_window_set_child (preview_window, preview);
+  gtk_window_set_default_size (audience_window, 640, 480);
+  gtk_window_set_default_size (preview_window, 320, 240);
+  gtk_window_present (audience_window);
+  gtk_window_present (preview_window);
+  run_loop_for (200);
+
+  audience_texture = snapshot_widget (audience);
+  preview_texture = snapshot_widget (preview);
+  g_assert_nonnull (audience_texture);
+  g_assert_nonnull (preview_texture);
+  pp_stage_get_asset_store_stats (PP_STAGE (audience), &stats);
+  g_assert_cmpuint (stats.svg_source_count, ==, 1);
+
+  gtk_window_destroy (audience_window);
+  gtk_window_destroy (preview_window);
+  run_loop_for (100);
+}
+
+static void
+test_raster_reload_cancels_prefetch (const char *asset_fixture,
+                                     const char *plain_fixture)
+{
+  GtkWidget *stage = g_object_ref_sink (pp_stage_new ());
+  PpAssetStoreStats stats;
+
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             load_presentation (asset_fixture),
+                             0);
+  pp_stage_get_asset_store_stats (PP_STAGE (stage), &stats);
+  g_assert_cmpuint (stats.pending_texture_count, >, 0);
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             load_presentation (plain_fixture),
+                             0);
+  pp_stage_get_asset_store_stats (PP_STAGE (stage), &stats);
+  g_assert_cmpuint (stats.pending_texture_count, ==, 0);
+  run_loop_for (300);
+  pp_stage_get_asset_store_stats (PP_STAGE (stage), &stats);
+  g_assert_cmpuint (stats.texture_count, ==, 0);
+  g_object_unref (stage);
+}
+
+static void
+test_raster_shutdown_cancels_prefetch (const char *asset_fixture)
+{
+  GtkWidget *stage = g_object_ref_sink (pp_stage_new ());
+  GtkWidget *weak_stage = stage;
+  PpAssetStoreStats stats;
+
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             load_presentation (asset_fixture),
+                             0);
+  pp_stage_get_asset_store_stats (PP_STAGE (stage), &stats);
+  g_assert_cmpuint (stats.pending_texture_count, >, 0);
+  g_object_add_weak_pointer (G_OBJECT (stage), (gpointer *) &weak_stage);
+  g_object_unref (stage);
+  g_assert_null (weak_stage);
+  run_loop_for (300);
+}
+
+static void
+test_raster_byte_budget (const char *asset_fixture)
+{
+  const guint64 budget = 4 * 1024 * 1024;
+  GtkWidget *stage = g_object_ref_sink (pp_stage_new ());
+  PpAssetStoreStats stats;
+
+  pp_stage_set_asset_texture_budget (PP_STAGE (stage), budget);
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             load_presentation (asset_fixture),
+                             0);
+  wait_for_asset_loads (PP_STAGE (stage), 5000);
+  pp_stage_get_asset_store_stats (PP_STAGE (stage), &stats);
+  g_assert_cmpuint (stats.texture_count, ==, 1);
+  g_assert_cmpuint (stats.texture_bytes, <=, budget);
+  g_assert_cmpuint (stats.texture_budget, ==, budget);
+
+  pp_stage_set_slide (PP_STAGE (stage), 2);
+  wait_for_asset_loads (PP_STAGE (stage), 5000);
+  pp_stage_get_asset_store_stats (PP_STAGE (stage), &stats);
+  g_assert_cmpuint (stats.texture_count, ==, 1);
+  g_assert_cmpuint (stats.texture_bytes, <=, budget);
+  g_object_unref (stage);
 }
 
 int
@@ -256,7 +412,7 @@ main (int   argc,
   guint white_pixels = 0;
   guint shaded_pixels = 0;
 
-  if (argc != 6)
+  if (argc != 7)
     return EXIT_FAILURE;
   width = (int) g_ascii_strtoll (argv[3], NULL, 10);
   height = (int) g_ascii_strtoll (argv[4], NULL, 10);
@@ -326,5 +482,9 @@ main (int   argc,
   run_loop_for (100);
   test_svg_background (application, argv[2], width, height);
   test_shared_raster_cache (application, argv[5]);
+  test_shared_svg_source (application, argv[2]);
+  test_raster_reload_cancels_prefetch (argv[6], argv[1]);
+  test_raster_shutdown_cancels_prefetch (argv[6]);
+  test_raster_byte_budget (argv[6]);
   return EXIT_SUCCESS;
 }

@@ -34,11 +34,6 @@ belongs here.
   explicit lifecycle, revocation, and Flatpak permissions before granting
   network access. `varlink-glib` also needs a dependency recheck because the
   GNOME 50 SDK currently has libdex 1.1 while the alpha requires 1.2.
-- [ ] Finish the presentation asset-store work. Load and prefetch large raster
-  textures off the main thread with cancellation on reload/shutdown; share a
-  parsed immutable SVG source where preview sizes differ; and replace the
-  eight-texture working-set bound with a byte-aware bound if representative
-  decks show materially different memory use.
 - [ ] Finish PDF export memory bounds and cancellation. The interactive path is
   now asynchronous and thumbnail candidates are scored in mapped GStreamer
   buffers, but the UI should expose cancellation, negotiate or scale the winner
@@ -115,10 +110,17 @@ belongs here.
   and is removed while idle or paused, with source-lifecycle regression tests.
 - [x] Establish watched, shared, bounded asset caching. Each unique background
   is classified and resolved once per presentation, audience and preview stages
-  share an eight-texture LRU working set, unchanged textures survive text-only
-  reloads, and every referenced image, SVG, video, or legacy transition file is
-  monitored for targeted live invalidation. Atomic replacement, cross-stage
-  reuse, and redraw after invalidation are covered by tests.
+  share an initial eight-texture LRU working set, unchanged textures survive
+  text-only reloads, and every referenced image, SVG, video, or legacy
+  transition file is monitored for targeted live invalidation. Atomic
+  replacement, cross-stage reuse, and redraw after invalidation are covered by
+  tests.
+- [x] Finish the presentation asset store. Current and adjacent raster images
+  decode through cancellable `GTask` workers, reload and final-stage shutdown
+  discard pending results, and audience/speaker stages share both textures and
+  one parsed librsvg source per file. A 64 MiB RGBA-equivalent decoded-texture
+  LRU replaces the eight-image limit; tests cover deduplication, invalidation,
+  cancellation, differently sized SVG consumers, and byte-bounded eviction.
 - [x] Remove the first interactive PDF stalls and redundant thumbnail copies.
   Launch-screen export now runs through a tested `GTask` while CLI export stays
   synchronous. Video candidates are scored directly in mapped RGBA buffers and

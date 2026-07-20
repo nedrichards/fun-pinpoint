@@ -55,15 +55,18 @@ export G_SLICE=${G_SLICE:-always-malloc}
 "$build_dir/tests/test-pixels" \
   "$root/tests/fixtures/pixel-reference.pin" \
   "$root/tests/fixtures/svg-quality.pin" 800 600 \
-  "$root/tests/fixtures/raster-cache.pin"
+  "$root/tests/fixtures/raster-cache.pin" \
+  "$root/tests/fixtures/asset-store.pin"
 "$build_dir/tests/test-pixels" \
   "$root/tests/fixtures/pixel-reference.pin" \
   "$root/tests/fixtures/svg-quality.pin" 1280 720 \
-  "$root/tests/fixtures/raster-cache.pin"
+  "$root/tests/fixtures/raster-cache.pin" \
+  "$root/tests/fixtures/asset-store.pin"
 GDK_SCALE=2 "$build_dir/tests/test-pixels" \
   "$root/tests/fixtures/pixel-reference.pin" \
   "$root/tests/fixtures/svg-quality.pin" 800 600 \
-  "$root/tests/fixtures/raster-cache.pin"
+  "$root/tests/fixtures/raster-cache.pin" \
+  "$root/tests/fixtures/asset-store.pin"
 "$build_dir/tests/test-lifecycle" \
   "$root/tests/fixtures/missing-video.pin" \
   "$root/tests/fixtures/legacy-transition.pin" \
