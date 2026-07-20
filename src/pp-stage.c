@@ -114,6 +114,7 @@ struct _PpStage
   GHashTable *text_nodes;
   GHashTable *svg_nodes;
   GHashTable *media;
+  PpMedia *camera_media;
   GHashTable *legacy_transitions;
   GHashTable *failed_transitions;
   guint current_slide;
@@ -826,23 +827,26 @@ configure_media_offload (PpStage       *self,
 }
 
 static void
+stop_media (PpMedia *media)
+{
+  if (media != NULL && media->playing && GST_IS_ELEMENT (media->player))
+    {
+      gst_element_set_state (media->player, GST_STATE_NULL);
+      media->playing = FALSE;
+    }
+}
+
+static void
 stop_all_media (PpStage *self)
 {
   GHashTableIter iter;
   gpointer value;
 
   disable_media_offload (self);
+  stop_media (self->camera_media);
   g_hash_table_iter_init (&iter, self->media);
   while (g_hash_table_iter_next (&iter, NULL, &value))
-    {
-      PpMedia *media = value;
-
-      if (media->playing && GST_IS_ELEMENT (media->player))
-        {
-          gst_element_set_state (media->player, GST_STATE_NULL);
-          media->playing = FALSE;
-        }
-    }
+    stop_media (value);
 }
 
 static LayerState
@@ -1428,7 +1432,8 @@ create_camera_media (PpStage *self,
   bus = gst_element_get_bus (media->player);
   media->bus_watch_id = gst_bus_add_watch (bus, media_bus_cb, media);
   gst_object_unref (bus);
-  g_hash_table_insert (self->media, g_strdup ("camera"), media);
+  g_clear_pointer (&self->camera_media, media_free);
+  self->camera_media = media;
   gtk_widget_queue_draw (GTK_WIDGET (self));
   return media;
 }
@@ -1605,7 +1610,7 @@ request_camera_idle_cb (gpointer user_data)
 static PpMedia *
 load_camera (PpStage *self)
 {
-  PpMedia *media = g_hash_table_lookup (self->media, "camera");
+  PpMedia *media = self->camera_media;
 
   if (media == NULL &&
       !self->camera_request_pending &&
@@ -2431,6 +2436,7 @@ pp_stage_dispose (GObject *object)
     }
   g_clear_pointer (&self->text_nodes, g_hash_table_unref);
   g_clear_pointer (&self->svg_nodes, g_hash_table_unref);
+  g_clear_pointer (&self->camera_media, media_free);
   g_clear_pointer (&self->media, g_hash_table_unref);
   g_clear_pointer (&self->legacy_transitions, g_hash_table_unref);
   g_clear_pointer (&self->failed_transitions, g_hash_table_unref);

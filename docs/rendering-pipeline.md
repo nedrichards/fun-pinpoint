@@ -27,7 +27,9 @@ directly to `gtk4paintablesink`. This lets PipeWire and the sink negotiate a
 shared DMA-BUF or native YUV format where the driver and compositor support it;
 an unconditional `videoconvert` no longer forces an intermediate processing
 stage. PipeWire's buffer pool remains enabled and its `always-copy` option
-remains disabled by default.
+remains disabled by default. The authorized camera pipeline belongs to the
+stage rather than the parsed presentation, so live source reloads can stop and
+resume it without closing the portal-provided PipeWire descriptor.
 
 Hardware decoding is opportunistic rather than mandatory. It requires the
 appropriate runtime plugin, a decoder with a sufficient GStreamer rank, a
