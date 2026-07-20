@@ -34,13 +34,6 @@ belongs here.
   explicit lifecycle, revocation, and Flatpak permissions before granting
   network access. `varlink-glib` also needs a dependency recheck because the
   GNOME 50 SDK currently has libdex 1.1 while the alpha requires 1.2.
-- [ ] Validate the host display automation runner with two displays in extended
-  desktop mode and GNOME Shell unsafe mode explicitly enabled. Manual two-screen
-  startup, navigation, swapping, unplug, and replug behaviour passed on 19 July
-  2026; this remaining gate is for `tests/run-host-display-test.sh` itself.
-  Physical connector events remain covered by the deterministic production
-  selection policy because a window-automation process cannot synthesize them
-  reliably.
 - [ ] Finish the presentation asset-store work. Load and prefetch large raster
   textures off the main thread with cancellation on reload/shutdown; share a
   parsed immutable SVG source where preview sizes differ; and replace the
@@ -149,6 +142,12 @@ belongs here.
   Presentation display mode owns exactly one idle inhibitor whether windowed or
   fullscreen; the live GNOME gate verifies flag `8`, stable ownership, and
   release on exit.
+- [x] Validate the host display automation runner with two displays in extended
+  desktop mode. The live GNOME run passed on 20 July 2026: audience and speaker
+  windows opened fullscreen on distinct displays, `S` swapped them, and `F11`
+  left and restored the two-display fullscreen arrangement. Physical connector
+  events remain covered by the deterministic production selection policy
+  because window automation cannot synthesize them reliably.
 - [x] Build isolated remote-control prototypes without selecting a production
   adapter. Per-instance D-Bus actions and conservative MPRIS drive the shared
   state model and preserve independent processes. A bounded Varlink interface

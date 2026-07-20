@@ -22,7 +22,7 @@ shell_eval ()
     "(true, '"*"')")
       value=${reply#"(true, '"}
       value=${value%"')"}
-      printf '%s\n' "$value" | jq -r .
+      printf '%b\n' "$value" | jq -r .
       ;;
     *)
       return 1
@@ -35,7 +35,9 @@ window_state ()
   shell_eval '
     JSON.stringify(global.get_window_actors()
       .map(actor => actor.get_meta_window())
-      .filter(window => window.get_title().includes("Pinpoint"))
+      .filter(window =>
+        window.get_title() === "Pinpoint Speaker View" ||
+        window.get_title().endsWith("— Pinpoint"))
       .map(window => ({
         id: window.get_id(),
         title: window.get_title(),
@@ -90,19 +92,36 @@ focus_speaker ()
       throw new Error("speaker window not found");
     window.activate(global.get_current_time());
     "focused"' >/dev/null
-  sleep 0.2
+  attempts=0
+  while [ "$attempts" -lt 50 ]
+  do
+    if [ "$(shell_eval '
+      String(global.display.focus_window?.get_title() ===
+             "Pinpoint Speaker View")')" = true ]
+    then
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  echo "GNOME Shell did not focus the Pinpoint speaker window." >&2
+  return 1
 }
 
 send_key ()
 {
   key=$1
   shell_eval "
+    const Clutter = imports.gi.Clutter;
+    const GLib = imports.gi.GLib;
     const device = Clutter.get_default_backend()
       .get_default_seat()
       .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
-    const time = global.get_current_time();
+    const time = GLib.get_monotonic_time();
     device.notify_keyval(time, Clutter.KEY_${key}, Clutter.KeyState.PRESSED);
-    device.notify_keyval(time + 1, Clutter.KEY_${key}, Clutter.KeyState.RELEASED);
+    device.notify_keyval(time + 1000,
+                         Clutter.KEY_${key},
+                         Clutter.KeyState.RELEASED);
     'sent'" >/dev/null
 }
 
