@@ -9,10 +9,14 @@
 #include <errno.h>
 #include <gdk/gdk.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <jpeglib.h>
 #include <librsvg/rsvg.h>
 #include <pango/pangocairo.h>
 #include <fcntl.h>
 #include <math.h>
+#include <setjmp.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #define A4_WIDTH 595.275590551
@@ -20,6 +24,7 @@
 #define LETTER_WIDTH 612.0
 #define LETTER_HEIGHT 792.0
 #define PDF_RASTER_PIXELS_PER_POINT 2.0
+#define PDF_JPEG_QUALITY 90
 
 typedef struct
 {
@@ -45,7 +50,164 @@ typedef struct
   double margin;
 } PdfRenderer;
 
+typedef struct
+{
+  struct jpeg_error_mgr parent;
+  jmp_buf jump;
+  char message[JMSG_LENGTH_MAX];
+} PdfJpegError;
+
+typedef struct
+{
+  struct jpeg_compress_struct compressor;
+  PdfJpegError error;
+  unsigned char *data;
+  unsigned long size;
+  gboolean created;
+} PdfJpegEncoder;
+
 static cairo_user_data_key_t pixel_data_key;
+
+static gboolean
+attach_mime_bytes (cairo_surface_t *surface,
+                   const char      *mime_type,
+                   GBytes          *bytes)
+{
+  gsize size = 0;
+  gconstpointer data = g_bytes_get_data (bytes, &size);
+  cairo_status_t status = cairo_surface_set_mime_data (
+    surface,
+    mime_type,
+    data,
+    size,
+    (cairo_destroy_func_t) g_bytes_unref,
+    bytes);
+
+  if (status != CAIRO_STATUS_SUCCESS)
+    {
+      g_bytes_unref (bytes);
+      return FALSE;
+    }
+  return TRUE;
+}
+
+static void
+pdf_jpeg_error_exit (j_common_ptr info)
+{
+  PdfJpegError *error = (PdfJpegError *) info->err;
+
+  (*info->err->format_message) (info, error->message);
+  longjmp (error->jump, 1);
+}
+
+static void
+free_jpeg_buffer (gpointer data)
+{
+  free (data);
+}
+
+static void
+attach_unique_id (cairo_surface_t *surface,
+                  const char      *kind,
+                  const char      *uri)
+{
+  int width = cairo_image_surface_get_width (surface);
+  int height = cairo_image_surface_get_height (surface);
+  g_autofree char *key = g_strdup_printf ("%s:%dx%d:%s",
+                                          kind,
+                                          width,
+                                          height,
+                                          uri);
+  char *id = g_compute_checksum_for_string (G_CHECKSUM_SHA256, key, -1);
+  cairo_status_t status = cairo_surface_set_mime_data (
+    surface,
+    CAIRO_MIME_TYPE_UNIQUE_ID,
+    (const unsigned char *) id,
+    strlen (id),
+    g_free,
+    id);
+
+  if (status != CAIRO_STATUS_SUCCESS)
+    g_free (id);
+}
+
+static gboolean
+attach_pixbuf_jpeg (cairo_surface_t *surface,
+                    GdkPixbuf       *pixbuf,
+                    GCancellable    *cancellable,
+                    GError         **error)
+{
+  PdfJpegEncoder *encoder = g_new0 (PdfJpegEncoder, 1);
+  g_autoptr (GBytes) bytes = NULL;
+  const guchar *pixels = gdk_pixbuf_read_pixels (pixbuf);
+  int width = gdk_pixbuf_get_width (pixbuf);
+  int height = gdk_pixbuf_get_height (pixbuf);
+  int stride = gdk_pixbuf_get_rowstride (pixbuf);
+  gboolean success = FALSE;
+
+  if (pixels == NULL || gdk_pixbuf_get_has_alpha (pixbuf) ||
+      gdk_pixbuf_get_n_channels (pixbuf) != 3)
+    {
+      g_set_error_literal (error,
+                           G_IO_ERROR,
+                           G_IO_ERROR_NOT_SUPPORTED,
+                           "Only opaque RGB images can be JPEG-encoded");
+      goto out;
+    }
+  encoder->compressor.err = jpeg_std_error (&encoder->error.parent);
+  encoder->error.parent.error_exit = pdf_jpeg_error_exit;
+  if (setjmp (encoder->error.jump) != 0)
+    {
+      g_set_error (error,
+                   G_IO_ERROR,
+                   G_IO_ERROR_FAILED,
+                   "Unable to encode JPEG: %s",
+                   encoder->error.message);
+      goto out;
+    }
+  jpeg_create_compress (&encoder->compressor);
+  encoder->created = TRUE;
+  jpeg_mem_dest (&encoder->compressor, &encoder->data, &encoder->size);
+  encoder->compressor.image_width = width;
+  encoder->compressor.image_height = height;
+  encoder->compressor.input_components = 3;
+  encoder->compressor.in_color_space = JCS_RGB;
+  jpeg_set_defaults (&encoder->compressor);
+  jpeg_set_quality (&encoder->compressor, PDF_JPEG_QUALITY, TRUE);
+  jpeg_start_compress (&encoder->compressor, TRUE);
+  while (encoder->compressor.next_scanline < encoder->compressor.image_height)
+    {
+      JSAMPROW row = (JSAMPROW) (pixels +
+        (gsize) encoder->compressor.next_scanline * stride);
+
+      if ((encoder->compressor.next_scanline % 64) == 0 &&
+          cancellable != NULL &&
+          g_cancellable_set_error_if_cancelled (cancellable, error))
+        goto out;
+      jpeg_write_scanlines (&encoder->compressor, &row, 1);
+    }
+  jpeg_finish_compress (&encoder->compressor);
+  bytes = g_bytes_new_with_free_func (encoder->data,
+                                      encoder->size,
+                                      free_jpeg_buffer,
+                                      encoder->data);
+  encoder->data = NULL;
+  success = attach_mime_bytes (surface,
+                               CAIRO_MIME_TYPE_JPEG,
+                               g_steal_pointer (&bytes));
+  if (!success)
+    g_set_error_literal (error,
+                         G_IO_ERROR,
+                         G_IO_ERROR_FAILED,
+                         "Cairo rejected the JPEG data");
+
+out:
+  if (encoder->created)
+    jpeg_destroy_compress (&encoder->compressor);
+  free (encoder->data);
+  g_free (encoder);
+  return success;
+}
 
 static void
 propagate_or_clear_error (GError  **destination,
@@ -189,7 +351,11 @@ get_image (PdfRenderer *renderer,
   g_autoptr (GFileInputStream) stream = NULL;
   g_autoptr (GdkPixbuf) pixbuf = NULL;
   g_autoptr (GError) local_error = NULL;
+  g_autofree char *format_name = NULL;
+  GdkPixbufFormat *format;
   cairo_surface_t *surface;
+  gboolean is_jpeg;
+  gboolean was_scaled;
   int intrinsic_width = 0;
   int intrinsic_height = 0;
   int max_width = (int) ceil (renderer->page_width * PDF_RASTER_PIXELS_PER_POINT);
@@ -201,7 +367,13 @@ get_image (PdfRenderer *renderer,
   path = g_file_get_path (file);
   if (path == NULL)
     return NULL;
-  gdk_pixbuf_get_file_info (path, &intrinsic_width, &intrinsic_height);
+  format = gdk_pixbuf_get_file_info (path,
+                                     &intrinsic_width,
+                                     &intrinsic_height);
+  if (format != NULL)
+    format_name = gdk_pixbuf_format_get_name (format);
+  is_jpeg = format != NULL &&
+            g_strcmp0 (format_name, "jpeg") == 0;
   stream = g_file_read (file, renderer->cancellable, &local_error);
   if (stream != NULL)
     pixbuf = gdk_pixbuf_new_from_stream_at_scale (G_INPUT_STREAM (stream),
@@ -226,38 +398,52 @@ get_image (PdfRenderer *renderer,
       return NULL;
     }
 
-  if (intrinsic_width == gdk_pixbuf_get_width (pixbuf) &&
-      intrinsic_height == gdk_pixbuf_get_height (pixbuf) &&
-      (g_str_has_suffix (path, ".jpg") || g_str_has_suffix (path, ".jpeg")))
+  was_scaled = intrinsic_width != gdk_pixbuf_get_width (pixbuf) ||
+               intrinsic_height != gdk_pixbuf_get_height (pixbuf);
+  if (is_jpeg)
     {
-      g_autoptr (GError) bytes_error = NULL;
-      GBytes *bytes = g_file_load_bytes (file,
-                                         renderer->cancellable,
-                                         NULL,
-                                         &bytes_error);
+      gboolean attached = FALSE;
 
-      if (bytes != NULL)
+      if (!was_scaled)
         {
-          gsize size = 0;
-          gconstpointer data = g_bytes_get_data (bytes, &size);
-          cairo_status_t mime_status = cairo_surface_set_mime_data (
-            surface,
-            CAIRO_MIME_TYPE_JPEG,
-            data,
-            size,
-            (cairo_destroy_func_t) g_bytes_unref,
-            bytes);
+          g_autoptr (GError) bytes_error = NULL;
+          GBytes *bytes = g_file_load_bytes (file,
+                                             renderer->cancellable,
+                                             NULL,
+                                             &bytes_error);
 
-          if (mime_status != CAIRO_STATUS_SUCCESS)
-            g_bytes_unref (bytes);
+          if (bytes != NULL)
+            attached = attach_mime_bytes (surface,
+                                          CAIRO_MIME_TYPE_JPEG,
+                                          bytes);
+          else if (g_error_matches (bytes_error,
+                                    G_IO_ERROR,
+                                    G_IO_ERROR_CANCELLED))
+            {
+              cairo_surface_destroy (surface);
+              propagate_or_clear_error (error,
+                                        g_steal_pointer (&bytes_error));
+              return NULL;
+            }
         }
-      else if (g_error_matches (bytes_error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      if (!attached &&
+          !attach_pixbuf_jpeg (surface,
+                               pixbuf,
+                               renderer->cancellable,
+                               &local_error))
         {
-          cairo_surface_destroy (surface);
-          propagate_or_clear_error (error, g_steal_pointer (&bytes_error));
-          return NULL;
+          if (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+            {
+              cairo_surface_destroy (surface);
+              propagate_or_clear_error (error, g_steal_pointer (&local_error));
+              return NULL;
+            }
+          g_warning ("Unable to compress PDF background: %s",
+                     local_error->message);
+          g_clear_error (&local_error);
         }
     }
+  attach_unique_id (surface, "image", uri);
   clear_raster (renderer);
   renderer->raster_uri = g_steal_pointer (&uri);
   renderer->raster.surface = surface;
@@ -340,6 +526,7 @@ get_video_thumbnail (PdfRenderer *renderer,
       g_hash_table_add (renderer->failed_videos, g_steal_pointer (&uri));
       return NULL;
     }
+  attach_unique_id (surface, "video", uri);
   clear_raster (renderer);
   renderer->raster_uri = g_steal_pointer (&uri);
   renderer->raster.surface = surface;

@@ -130,7 +130,10 @@ export-quality bound instead of always retaining a source-resolution RGBA
 frame. Release image surfaces after their final slide or use a bounded cache so
 a long image-led deck does not retain every decoded background simultaneously.
 The PDF path needs CPU/vector data; forcing DMA-BUF or hardware decode here
-would usually add a readback rather than remove one.
+would usually add a readback rather than remove one. Downscaled JPEG backgrounds
+are JPEG-encoded before Cairo embeds them, while a stable Cairo unique ID lets
+revisited assets share one PDF image object even though only the most recent
+decoded surface remains resident.
 
 ### 4. Prototype modern GTK acceleration behind evidence gates
 

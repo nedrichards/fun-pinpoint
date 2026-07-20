@@ -67,8 +67,10 @@ prefetches watched and byte-bounded raster assets, shares parsed SVG sources,
 moves interactive PDF export off the GTK thread, and scores thumbnail
 candidates without copying them. Stable media backgrounds now use GTK's
 opportunistic compositor-offload path with automatic GSK fallback. PDF export
-now has cancellation and bounded raster memory, and the GTK-native SVG
-comparison concluded that the cached librsvg path should remain primary.
+now has cancellation and bounded raster memory, retains JPEG compression after
+downscaling, and deduplicates revisited raster assets without retaining their
+decoded surfaces. The GTK-native SVG comparison concluded that the cached
+librsvg path should remain primary.
 
 ## Page-curl work avoided
 

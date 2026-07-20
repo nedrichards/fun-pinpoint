@@ -11,6 +11,8 @@
 #include <glib/gstdio.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
+#include <stdio.h>
+#include <jpeglib.h>
 #include <math.h>
 #include <string.h>
 
@@ -746,6 +748,164 @@ test_pdf_export (void)
   g_assert_cmpuint (g_file_info_get_size (info), >, 0);
   g_assert_true (g_file_delete (file, NULL, &error));
   g_assert_no_error (error);
+}
+
+static guint
+count_pdf_tokens (const char *contents,
+                  gsize       length,
+                  const char *token)
+{
+  gsize token_length = strlen (token);
+  guint count = 0;
+
+  for (gsize offset = 0; offset + token_length <= length;)
+    {
+      if (memcmp (contents + offset, token, token_length) == 0)
+        {
+          count++;
+          offset += token_length;
+        }
+      else
+        offset++;
+    }
+  return count;
+}
+
+static gboolean
+save_test_jpeg (GdkPixbuf  *pixbuf,
+                const char *path)
+{
+  struct jpeg_compress_struct compressor;
+  struct jpeg_error_mgr error;
+  FILE *file = g_fopen (path, "wb");
+  const guchar *pixels = gdk_pixbuf_read_pixels (pixbuf);
+  int stride = gdk_pixbuf_get_rowstride (pixbuf);
+
+  if (file == NULL || pixels == NULL)
+    {
+      if (file != NULL)
+        fclose (file);
+      return FALSE;
+    }
+  compressor.err = jpeg_std_error (&error);
+  jpeg_create_compress (&compressor);
+  jpeg_stdio_dest (&compressor, file);
+  compressor.image_width = gdk_pixbuf_get_width (pixbuf);
+  compressor.image_height = gdk_pixbuf_get_height (pixbuf);
+  compressor.input_components = 3;
+  compressor.in_color_space = JCS_RGB;
+  jpeg_set_defaults (&compressor);
+  jpeg_set_quality (&compressor, 92, TRUE);
+  jpeg_start_compress (&compressor, TRUE);
+  while (compressor.next_scanline < compressor.image_height)
+    {
+      JSAMPROW row = (JSAMPROW) (pixels +
+        (gsize) compressor.next_scanline * stride);
+
+      jpeg_write_scanlines (&compressor, &row, 1);
+    }
+  jpeg_finish_compress (&compressor);
+  jpeg_destroy_compress (&compressor);
+  return fclose (file) == 0;
+}
+
+static void
+test_pdf_jpeg_compression_and_deduplication (void)
+{
+  static const char source[] =
+    "-- [large.jpg] [fill]\nFirst use\n"
+    "-- [white]\nIntervening slide\n"
+    "-- [large.jpg] [fill]\nSecond use\n";
+  const int image_width = 1800;
+  const int image_height = 1350;
+  PpPdfOptions options = PP_PDF_OPTIONS_DEFAULT;
+  g_autofree char *directory_path = NULL;
+  g_autofree char *image_path = NULL;
+  g_autofree char *presentation_path = NULL;
+  g_autofree char *output_path = NULL;
+  g_autofree char *pdf_contents = NULL;
+  g_autoptr (GdkPixbuf) pixbuf = gdk_pixbuf_new (GDK_COLORSPACE_RGB,
+                                                 FALSE,
+                                                 8,
+                                                 image_width,
+                                                 image_height);
+  g_autoptr (GFile) presentation_file = NULL;
+  g_autoptr (GFile) output_file = NULL;
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GError) error = NULL;
+  guchar *pixels;
+  int stride;
+  gsize pdf_length = 0;
+  GStatBuf image_stat;
+  GStatBuf output_stat;
+
+  g_assert_nonnull (pixbuf);
+  pixels = gdk_pixbuf_get_pixels (pixbuf);
+  stride = gdk_pixbuf_get_rowstride (pixbuf);
+  directory_path = g_dir_make_tmp ("pinpoint-pdf-images-XXXXXX", &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (directory_path);
+  image_path = g_build_filename (directory_path, "large.jpg", NULL);
+  presentation_path = g_build_filename (directory_path, "images.pin", NULL);
+  output_path = g_build_filename (directory_path, "images.pdf", NULL);
+  presentation_file = g_file_new_for_path (presentation_path);
+  output_file = g_file_new_for_path (output_path);
+  for (int y = 0; y < image_height; y++)
+    for (int x = 0; x < image_width; x++)
+      {
+        guchar *pixel = pixels + (gsize) y * stride + x * 3;
+
+        pixel[0] = (x * 7 + y * 3) & 0xff;
+        pixel[1] = (x * 2 + y * 11) & 0xff;
+        pixel[2] = ((x / 8) * 29 + (y / 8) * 17) & 0xff;
+      }
+  g_assert_true (save_test_jpeg (pixbuf, image_path));
+  g_assert_true (g_file_set_contents (presentation_path,
+                                      source,
+                                      -1,
+                                      &error));
+  g_assert_no_error (error);
+  presentation = pp_presentation_load_for_pdf (presentation_file,
+                                               FALSE,
+                                               NULL,
+                                               &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (presentation);
+  options.include_speaker_notes = FALSE;
+  g_assert_true (pp_pdf_export_with_options (presentation,
+                                             output_file,
+                                             &options,
+                                             &error));
+  g_assert_no_error (error);
+  g_assert_true (g_file_get_contents (output_path,
+                                      &pdf_contents,
+                                      &pdf_length,
+                                      &error));
+  g_assert_no_error (error);
+  g_assert_cmpuint (count_pdf_tokens (pdf_contents,
+                                      pdf_length,
+                                      "/DCTDecode"),
+                    ==,
+                    1);
+  g_assert_cmpuint (count_pdf_tokens (pdf_contents,
+                                      pdf_length,
+                                      "/Subtype /Image"),
+                    ==,
+                    1);
+  g_assert_cmpint (g_stat (image_path, &image_stat), ==, 0);
+  g_assert_cmpint (g_stat (output_path, &output_stat), ==, 0);
+  g_test_message ("source JPEG: %" G_GOFFSET_FORMAT
+                  " bytes; deduplicated PDF: %" G_GOFFSET_FORMAT " bytes",
+                  (goffset) image_stat.st_size,
+                  (goffset) output_stat.st_size);
+  g_assert_cmpuint ((guint64) output_stat.st_size,
+                    <,
+                    (guint64) image_stat.st_size);
+
+  g_assert_cmpint (g_remove (output_path), ==, 0);
+  g_assert_cmpint (g_remove (presentation_path), ==, 0);
+  g_assert_cmpint (g_remove (image_path), ==, 0);
+  g_assert_cmpint (g_rmdir (directory_path), ==, 0);
 }
 
 typedef struct
@@ -1619,6 +1779,8 @@ main (int   argc,
   g_test_add_func ("/file-access/bundled-introduction",
                    test_bundled_introduction);
   g_test_add_func ("/render/pdf-export", test_pdf_export);
+  g_test_add_func ("/render/pdf-jpeg-compression-and-deduplication",
+                   test_pdf_jpeg_compression_and_deduplication);
   g_test_add_func ("/render/pdf-export-cancellation",
                    test_pdf_export_cancellation);
   g_test_add_func ("/render/pdf-export-async", test_pdf_export_async);
