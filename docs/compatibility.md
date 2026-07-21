@@ -48,6 +48,9 @@ fixes.
   hotplug handling, plus a speaker-toolbar action that swaps the active pair
   while leaving any additional displays untouched
 - Rehearsal timing accumulation and atomic serialization back to the source
+- Original command-line option names and short forms, with Ctrl+C rehearsal
+  abort semantics retained. Additive version/check and PDF controls do not
+  alter valid 0.1.8 presentation invocations.
 - PDF output with A4 and US Letter paper sizes, landscape and portrait
   orientation, optional separate speaker-note pages, wrapped note text, and
   equivalent GUI and command-line controls

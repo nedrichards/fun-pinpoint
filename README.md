@@ -20,6 +20,8 @@ complete `.pin` syntax, [the compatibility ledger](docs/compatibility.md) for
 retained behaviour and validation history, [external editor
 support](docs/external-editors.md) for GtkSourceView highlighting and live
 editing, and [the product backlog](TODO.md) for all open work.
+The [command-line reference](docs/command-line.md) documents scripted checks,
+PDF export, exit statuses, and interruption guarantees.
 
 ## Build
 
@@ -33,9 +35,24 @@ flatpak run --user --filesystem="$PWD" --command=meson \
 flatpak run --user --filesystem="$PWD" --command=meson \
   org.gnome.Sdk//50 compile -C "$PWD/_build"
 flatpak run --user --filesystem="$PWD" --device=dri \
+  --talk-name=org.freedesktop.Flatpak \
   --socket=wayland --socket=fallback-x11 --command=meson \
-  org.gnome.Sdk//50 test -C "$PWD/_build" --print-errorlogs
+  org.gnome.Sdk//50 test -C "$PWD/_build" --print-errorlogs \
+  --wrapper="$PWD/tests/run-in-devel-flatpak.sh"
 ```
+
+The test wrapper gives Glycin the installed development application's real
+Flatpak identity. Install or refresh that application before running the suite:
+
+```sh
+flatpak-builder --user --install --force-clean build-dir \
+  flatpak/com.nedrichards.pinpoint.Devel.json
+```
+
+Glycin starts its image loaders in a nested sandbox belonging to the calling
+Flatpak. Running the tests directly as `org.gnome.Sdk` supplies the SDK runtime
+identity instead of Pinpoint's application ID and makes JPEG-backed tests fail.
+Set `PINPOINT_FLATPAK_ID` if validating a differently named development build.
 
 Do not use the host Meson or compiler for release validation. If the SDK is
 installed system-wide rather than per-user, omit `--user`.
@@ -130,13 +147,16 @@ pinpoint --output=talk.pdf --pdf-page-size=a4 \
 ```
 
 Interactive exports show per-slide progress and can be cancelled. CLI exports
-show the same progress when standard error is a terminal; Ctrl+C cancels cleanly
-without replacing an existing output file with a partial PDF.
+show the same progress when standard error is a terminal; Ctrl+C and SIGTERM
+cancel cleanly without replacing an existing output file with a partial PDF or
+allowing the output to overwrite its source presentation. For a non-interactive
+format and asset check, run `pinpoint --check talk.pin`; see the complete
+[command-line reference](docs/command-line.md).
 
 Build the development Flatpak with:
 
 ```sh
-flatpak-builder --user --force-clean build-dir \
+flatpak-builder --user --install --force-clean build-dir \
   flatpak/com.nedrichards.pinpoint.Devel.json
 ```
 

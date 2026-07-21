@@ -30,8 +30,6 @@ belongs here.
   GNOME 50 SDK currently has libdex 1.1 while the alpha requires 1.2.
 - [ ] Investigate building a custom android remote app, it would need to work
   with wear os on a pixel watch 2 and android on a Pixel 9.
-- [ ] investigate the CLI and make sure it is robust against cancellation and
-  interruption
 - [ ] **Blocked on the runtime providing GTK 4.24:** Integrate GTK-managed
   desktop session save and restore once the pinned SDK exposes the new
   application-state API. Follow `docs/session-restore.md`: normal launches must
@@ -90,6 +88,18 @@ belongs here.
   out of the lean presentation path when the editor is not installed or used.
 
 ## Completed work
+
+- [x] Audit and harden the command-line contract without breaking valid 0.1.8
+  invocations. PDF export now rejects its source file and path aliases to it;
+  Ctrl+C and SIGTERM cancel atomically with conventional 130/143 statuses;
+  a repeated termination signal force-quits; and interrupted rehearsal leaves
+  its source untouched. Ambiguous multiple presentations fail explicitly.
+  Additive `--version` and non-interactive `--check` modes support scripts;
+  checking covers UTF-8 parsing, relative backgrounds, and custom legacy
+  transition JSON without executing commands or decoding media. Application
+  tests cover successful and failing checks, signal paths, destination
+  preservation, source aliases, and subprocess teardown. See
+  `docs/command-line.md`.
 
 - [x] Improve the external-editor experience without making an editor part of
   the presentation runtime. The installed GtkSourceView 5 definition associates
