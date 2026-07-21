@@ -152,9 +152,10 @@ test(
     pinpoint_exe,
     files('fixtures/multi-monitor.pin'),
     media_pipeline_fixture,
+    files('fixtures/legacy-transition.pin'),
   ],
   is_parallel: false,
-  timeout: 15,
+  timeout: 25,
 )
 
 pixel_test = executable(

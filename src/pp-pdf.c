@@ -779,6 +779,7 @@ pp_pdf_export_with_options_full (const PpPresentation *presentation,
   int temporary_fd;
   gboolean success = FALSE;
   gboolean render_complete = FALSE;
+  GFile *presentation_file;
 
   g_return_val_if_fail (presentation != NULL, FALSE);
   g_return_val_if_fail (G_IS_FILE (output), FALSE);
@@ -789,6 +790,54 @@ pp_pdf_export_with_options_full (const PpPresentation *presentation,
   if (cancellable != NULL &&
       g_cancellable_set_error_if_cancelled (cancellable, error))
     return FALSE;
+
+  presentation_file = pp_presentation_get_file (presentation);
+  if (presentation_file != NULL)
+    {
+      g_autoptr (GFileInfo) presentation_info = NULL;
+      g_autoptr (GFileInfo) output_info = NULL;
+      const char *presentation_id;
+      const char *output_id;
+
+      if (g_file_equal (presentation_file, output))
+        {
+          g_set_error_literal (error,
+                               G_IO_ERROR,
+                               G_IO_ERROR_INVALID_ARGUMENT,
+                               "PDF output must not replace the presentation source");
+          return FALSE;
+        }
+
+      /* GFile equality is URI based. Query the underlying identity as well so
+       * aliases through symlinked directories cannot overwrite the source. */
+      presentation_info = g_file_query_info (presentation_file,
+                                               G_FILE_ATTRIBUTE_ID_FILE,
+                                               G_FILE_QUERY_INFO_NONE,
+                                               cancellable,
+                                               NULL);
+      output_info = g_file_query_info (output,
+                                       G_FILE_ATTRIBUTE_ID_FILE,
+                                       G_FILE_QUERY_INFO_NONE,
+                                       cancellable,
+                                       NULL);
+      presentation_id = presentation_info != NULL
+        ? g_file_info_get_attribute_string (presentation_info,
+                                            G_FILE_ATTRIBUTE_ID_FILE)
+        : NULL;
+      output_id = output_info != NULL
+        ? g_file_info_get_attribute_string (output_info,
+                                            G_FILE_ATTRIBUTE_ID_FILE)
+        : NULL;
+      if (presentation_id != NULL && output_id != NULL &&
+          g_str_equal (presentation_id, output_id))
+        {
+          g_set_error_literal (error,
+                               G_IO_ERROR,
+                               G_IO_ERROR_INVALID_ARGUMENT,
+                               "PDF output must not replace the presentation source");
+          return FALSE;
+        }
+    }
 
   path = g_file_get_path (output);
   if (path == NULL)

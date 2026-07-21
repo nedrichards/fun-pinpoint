@@ -11,6 +11,7 @@
 #include "pp-render.h"
 #include "pp-speaker.h"
 #include "pp-stage.h"
+#include "pp-transition.h"
 
 #include <adwaita.h>
 #include <gio/gfiledescriptorbased.h>
@@ -103,11 +104,16 @@ static gboolean
 termination_signal_cb (Pinpoint *pinpoint,
                        int       signal_number)
 {
+  if (pinpoint->termination_signal != 0)
+    _exit (128 + signal_number);
+
   pinpoint->termination_signal = signal_number;
   if (pinpoint->pdf_export_cancellable != NULL)
     g_cancellable_cancel (pinpoint->pdf_export_cancellable);
   if (pinpoint->application != NULL)
     g_application_quit (G_APPLICATION (pinpoint->application));
+  /* Keep both signal sources active so repeating either signal can force an
+   * exit if cancellation or application shutdown cannot complete. */
   return G_SOURCE_CONTINUE;
 }
 
@@ -231,6 +237,70 @@ run_cli_pdf_export (Pinpoint *pinpoint,
       g_clear_error (&export.error);
       return EXIT_FAILURE;
     }
+  return EXIT_SUCCESS;
+}
+
+static int
+run_cli_check (Pinpoint *pinpoint)
+{
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GHashTable) checked_transitions = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autofree char *display_name = g_file_get_parse_name (pinpoint->file);
+  g_autofree char *missing_asset = NULL;
+  guint n_slides;
+
+  presentation = pp_presentation_load (pinpoint->file,
+                                       pinpoint->ignore_comments,
+                                       NULL,
+                                       &error);
+  if (presentation == NULL)
+    {
+      g_printerr ("pinpoint: %s: %s\n", display_name, error->message);
+      return EXIT_FAILURE;
+    }
+
+  missing_asset = pp_render_find_missing_relative_asset (presentation);
+  if (missing_asset != NULL)
+    {
+      g_printerr ("pinpoint: %s: missing relative asset “%s”\n",
+                  display_name,
+                  missing_asset);
+      return EXIT_FAILURE;
+    }
+
+  checked_transitions = g_hash_table_new_full (g_str_hash,
+                                                g_str_equal,
+                                                g_free,
+                                                NULL);
+  n_slides = pp_presentation_get_n_slides (presentation);
+  for (guint i = 0; i < n_slides; i++)
+    {
+      const PpSlide *slide = pp_presentation_get_slide (presentation, i);
+      const char *name = slide->transition;
+      g_autoptr (PpLegacyTransition) transition = NULL;
+
+      if (name == NULL || *name == '\0' ||
+          pp_transition_is_builtin (name) ||
+          g_hash_table_contains (checked_transitions, name))
+        continue;
+      transition = pp_legacy_transition_load (presentation, name, &error);
+      if (transition == NULL)
+        {
+          g_printerr ("pinpoint: %s: slide %u transition “%s”: %s\n",
+                      display_name,
+                      i + 1,
+                      name,
+                      error->message);
+          return EXIT_FAILURE;
+        }
+      g_hash_table_add (checked_transitions, g_strdup (name));
+    }
+
+  g_print ("%s: valid Pinpoint presentation (%u %s)\n",
+           display_name,
+           n_slides,
+           n_slides == 1 ? "slide" : "slides");
   return EXIT_SUCCESS;
 }
 
@@ -2381,6 +2451,8 @@ main (int   argc,
   g_autofree char *pdf_page_size = NULL;
   g_autofree char *pdf_orientation = NULL;
   gboolean pdf_no_speaker_notes = FALSE;
+  gboolean check_only = FALSE;
+  gboolean show_version = FALSE;
   GOptionEntry options[] = {
     { "maximized", 'm', 0, G_OPTION_ARG_NONE, &pinpoint.maximized,
       "Maximize without window decoration", NULL },
@@ -2402,6 +2474,10 @@ main (int   argc,
       "Do not add speaker-note pages to PDF output", NULL },
     { "camera", 'c', 0, G_OPTION_ARG_STRING, &pinpoint.camera_device,
       "Device to use for camera backgrounds", "DEVICE" },
+    { "check", 0, 0, G_OPTION_ARG_NONE, &check_only,
+      "Check presentation syntax and referenced assets, then exit", NULL },
+    { "version", 0, 0, G_OPTION_ARG_NONE, &show_version,
+      "Show the Pinpoint version", NULL },
     { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &files,
       NULL, "PRESENTATION" },
     { NULL }
@@ -2424,6 +2500,20 @@ main (int   argc,
   if (!g_option_context_parse (option_context, &argc, &argv, &error))
     {
       g_printerr ("pinpoint: %s\n", error->message);
+      return EXIT_FAILURE;
+    }
+
+  if (show_version)
+    {
+      g_print ("pinpoint %s\n", PINPOINT_VERSION);
+      pinpoint_clear (&pinpoint);
+      return EXIT_SUCCESS;
+    }
+
+  if (files != NULL && files[0] != NULL && files[1] != NULL)
+    {
+      g_printerr ("pinpoint: exactly one presentation may be specified\n");
+      pinpoint_clear (&pinpoint);
       return EXIT_FAILURE;
     }
 
@@ -2454,6 +2544,25 @@ main (int   argc,
   if (files != NULL && files[0] != NULL)
     pinpoint.file = g_file_new_for_commandline_arg (files[0]);
 
+  if (check_only)
+    {
+      if (output_filename != NULL)
+        {
+          g_printerr ("pinpoint: --check cannot be combined with --output\n");
+          pinpoint_clear (&pinpoint);
+          return EXIT_FAILURE;
+        }
+      if (pinpoint.file == NULL)
+        {
+          g_printerr ("pinpoint: --check requires a presentation\n");
+          pinpoint_clear (&pinpoint);
+          return EXIT_FAILURE;
+        }
+      status = run_cli_check (&pinpoint);
+      pinpoint_clear (&pinpoint);
+      return status;
+    }
+
   if (output_filename != NULL)
     {
       g_autoptr (GFile) output = NULL;
@@ -2482,6 +2591,8 @@ main (int   argc,
                     G_CALLBACK (application_shutdown_cb),
                     &pinpoint);
   status = g_application_run (G_APPLICATION (pinpoint.application), argc, argv);
+  if (pinpoint.termination_signal != 0)
+    status = 128 + pinpoint.termination_signal;
   pinpoint_clear (&pinpoint);
 
   return status;

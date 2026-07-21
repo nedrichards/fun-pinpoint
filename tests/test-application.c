@@ -10,6 +10,7 @@
 static const char *pinpoint_path;
 static const char *presentation_path;
 static const char *media_presentation_path;
+static const char *legacy_transition_path;
 
 #define MPRIS_OBJECT_PATH "/org/mpris/MediaPlayer2"
 #define MPRIS_PLAYER_INTERFACE "org.mpris.MediaPlayer2.Player"
@@ -59,8 +60,9 @@ assert_file_descriptor_ceiling (guint       baseline,
 }
 
 static char *
-finish_process (GSubprocess *process,
-                int          expected_status)
+finish_process_with_stdout (GSubprocess *process,
+                            int          expected_status,
+                            char       **stdout_result)
 {
   g_autofree char *stdout_text = NULL;
   g_autofree char *stderr_text = NULL;
@@ -80,7 +82,16 @@ finish_process (GSubprocess *process,
   g_assert_cmpint (g_subprocess_get_exit_status (process), ==, expected_status);
   g_assert_null (strstr (stderr_text, "CRITICAL"));
   g_assert_null (strstr (stderr_text, "AddressSanitizer"));
+  if (stdout_result != NULL)
+    *stdout_result = g_steal_pointer (&stdout_text);
   return g_steal_pointer (&stderr_text);
+}
+
+static char *
+finish_process (GSubprocess *process,
+                int          expected_status)
+{
+  return finish_process_with_stdout (process, expected_status, NULL);
 }
 
 static GSubprocess *
@@ -332,10 +343,10 @@ test_mpris_multi_instance_control (void)
                    "org.freedesktop.DBus.Error.NotSupported");
 
   terminate_running_application (second);
-  g_autofree char *second_stderr = finish_process (second, EXIT_SUCCESS);
+  g_autofree char *second_stderr = finish_process (second, 128 + SIGTERM);
   g_assert_null (strstr (second_stderr, "pinpoint: "));
   terminate_running_application (first);
-  g_autofree char *first_stderr = finish_process (first, EXIT_SUCCESS);
+  g_autofree char *first_stderr = finish_process (first, 128 + SIGTERM);
   g_assert_null (strstr (first_stderr, "pinpoint: "));
 }
 
@@ -352,7 +363,7 @@ test_fullscreen_speaker_shutdown (void)
   g_autoptr (GSubprocess) process = launch_application (arguments);
 
   terminate_running_application (process);
-  g_autofree char *stderr_text = finish_process (process, EXIT_SUCCESS);
+  g_autofree char *stderr_text = finish_process (process, 128 + SIGTERM);
   g_assert_null (strstr (stderr_text, "pinpoint: "));
 }
 
@@ -367,7 +378,7 @@ test_playing_media_shutdown (void)
   g_autoptr (GSubprocess) process = launch_application (arguments);
 
   terminate_running_application (process);
-  g_autofree char *stderr_text = finish_process (process, EXIT_SUCCESS);
+  g_autofree char *stderr_text = finish_process (process, 128 + SIGTERM);
   g_assert_null (strstr (stderr_text, "pinpoint: "));
 }
 
@@ -381,7 +392,7 @@ test_invalid_file_shutdown (void)
   g_autoptr (GSubprocess) process = launch_application (arguments);
 
   terminate_running_application (process);
-  g_autofree char *stderr_text = finish_process (process, EXIT_SUCCESS);
+  g_autofree char *stderr_text = finish_process (process, 128 + SIGTERM);
   g_assert_nonnull (strstr (stderr_text, "Unable to load presentation"));
 }
 
@@ -440,7 +451,7 @@ test_reload_then_shutdown (void)
   g_assert_no_error (error);
   wait_for_mpris_title (connection, mpris_name, "Slide 1 of 2");
   g_subprocess_send_signal (process, SIGTERM);
-  g_autofree char *stderr_text = finish_process (process, EXIT_SUCCESS);
+  g_autofree char *stderr_text = finish_process (process, 128 + SIGTERM);
   g_assert_null (strstr (stderr_text, "pinpoint:"));
   g_assert_cmpint (g_remove (path), ==, 0);
   g_assert_cmpint (g_remove (asset_path), ==, 0);
@@ -460,6 +471,166 @@ test_invalid_pdf_option (void)
   g_autofree char *stderr_text = finish_process (process, EXIT_FAILURE);
 
   g_assert_nonnull (strstr (stderr_text, "unknown PDF paper size"));
+}
+
+static void
+test_version (void)
+{
+  const char *arguments[] = { pinpoint_path, "--version", NULL };
+  g_autoptr (GSubprocess) process = launch_application (arguments);
+  g_autofree char *stdout_text = NULL;
+  g_autofree char *stderr_text = finish_process_with_stdout (process,
+                                                             EXIT_SUCCESS,
+                                                             &stdout_text);
+
+  g_assert_cmpstr (stderr_text, ==, "");
+  g_assert_true (g_str_has_prefix (stdout_text, "pinpoint "));
+  g_assert_true (g_str_has_suffix (stdout_text, "\n"));
+}
+
+static void
+test_check_presentation (void)
+{
+  const char *arguments[] = {
+    pinpoint_path,
+    "--check",
+    presentation_path,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = launch_application (arguments);
+  g_autofree char *stdout_text = NULL;
+  g_autofree char *stderr_text = finish_process_with_stdout (process,
+                                                             EXIT_SUCCESS,
+                                                             &stdout_text);
+
+  g_assert_cmpstr (stderr_text, ==, "");
+  g_assert_nonnull (strstr (stdout_text,
+                            "valid Pinpoint presentation (3 slides)"));
+}
+
+static void
+test_check_legacy_transition (void)
+{
+  const char *arguments[] = {
+    pinpoint_path,
+    "--check",
+    legacy_transition_path,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = launch_application (arguments);
+  g_autofree char *stdout_text = NULL;
+  g_autofree char *stderr_text = finish_process_with_stdout (process,
+                                                             EXIT_SUCCESS,
+                                                             &stdout_text);
+
+  g_assert_cmpstr (stderr_text, ==, "");
+  g_assert_nonnull (strstr (stdout_text, "valid Pinpoint presentation"));
+}
+
+static void
+test_check_missing_asset (void)
+{
+  g_autofree char *directory = g_dir_make_tmp ("pinpoint-check-XXXXXX", NULL);
+  g_autofree char *presentation = g_build_filename (directory,
+                                                    "missing.pin",
+                                                    NULL);
+  g_autoptr (GError) error = NULL;
+  const char *arguments[] = {
+    pinpoint_path,
+    "--check",
+    presentation,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = NULL;
+
+  g_assert_true (g_file_set_contents (presentation,
+                                      "-- [missing.png]\nMissing\n",
+                                      -1,
+                                      &error));
+  g_assert_no_error (error);
+  process = launch_application (arguments);
+  g_autofree char *stderr_text = finish_process (process, EXIT_FAILURE);
+  g_assert_nonnull (strstr (stderr_text,
+                            "missing relative asset “missing.png”"));
+  g_assert_cmpint (g_remove (presentation), ==, 0);
+  g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+static void
+test_check_invalid_custom_transition (void)
+{
+  g_autofree char *directory = g_dir_make_tmp ("pinpoint-check-transition-XXXXXX",
+                                               NULL);
+  g_autofree char *presentation = g_build_filename (directory,
+                                                    "transition.pin",
+                                                    NULL);
+  g_autoptr (GError) error = NULL;
+  const char *arguments[] = {
+    pinpoint_path,
+    "--check",
+    presentation,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = NULL;
+
+  g_assert_true (g_file_set_contents (
+    presentation,
+    "-- [transition=missing-custom-transition]\nMissing transition\n",
+    -1,
+    &error));
+  g_assert_no_error (error);
+  process = launch_application (arguments);
+  g_autofree char *stderr_text = finish_process (process, EXIT_FAILURE);
+  g_assert_nonnull (strstr (stderr_text,
+                            "transition “missing-custom-transition”"));
+  g_assert_cmpint (g_remove (presentation), ==, 0);
+  g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+static void
+test_multiple_presentations_are_rejected (void)
+{
+  const char *arguments[] = {
+    pinpoint_path,
+    presentation_path,
+    presentation_path,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = launch_application (arguments);
+  g_autofree char *stderr_text = finish_process (process, EXIT_FAILURE);
+
+  g_assert_nonnull (strstr (stderr_text,
+                            "exactly one presentation may be specified"));
+}
+
+static void
+test_check_argument_errors (void)
+{
+  const char *missing_arguments[] = {
+    pinpoint_path,
+    "--check",
+    NULL,
+  };
+  const char *output_arguments[] = {
+    pinpoint_path,
+    "--check",
+    "--output=unused.pdf",
+    presentation_path,
+    NULL,
+  };
+  g_autoptr (GSubprocess) missing_process = launch_application (
+    missing_arguments);
+  g_autofree char *missing_stderr = finish_process (missing_process,
+                                                    EXIT_FAILURE);
+  g_autoptr (GSubprocess) output_process = launch_application (
+    output_arguments);
+  g_autofree char *output_stderr = finish_process (output_process,
+                                                   EXIT_FAILURE);
+
+  g_assert_nonnull (strstr (missing_stderr,
+                            "--check requires a presentation"));
+  g_assert_nonnull (strstr (output_stderr,
+                            "--check cannot be combined with --output"));
 }
 
 static void
@@ -513,7 +684,7 @@ test_pdf_export (void)
 }
 
 static void
-test_pdf_export_ctrl_c (void)
+test_pdf_export_signal (int signal_number)
 {
   static const char sentinel[] = "existing destination";
   g_autofree char *directory = g_dir_make_tmp ("pinpoint-pdf-signal-XXXXXX",
@@ -554,8 +725,9 @@ test_pdf_export_ctrl_c (void)
   /* Allow startup to reach the CLI export main loop before delivering SIGINT. */
   run_loop_for (250);
   g_assert_true (process_is_running (process));
-  g_subprocess_send_signal (process, SIGINT);
-  g_autofree char *stderr_text = finish_process (process, 128 + SIGINT);
+  g_subprocess_send_signal (process, signal_number);
+  g_autofree char *stderr_text = finish_process (process,
+                                                 128 + signal_number);
   g_assert_null (strstr (stderr_text, "pinpoint: "));
   g_assert_true (g_file_get_contents (output,
                                       &contents,
@@ -566,6 +738,155 @@ test_pdf_export_ctrl_c (void)
   g_assert_cmpmem (contents, length, sentinel, strlen (sentinel));
   g_assert_cmpint (g_remove (presentation), ==, 0);
   g_assert_cmpint (g_remove (output), ==, 0);
+  g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+static void
+test_pdf_export_ctrl_c (void)
+{
+  test_pdf_export_signal (SIGINT);
+}
+
+static void
+test_pdf_export_sigterm (void)
+{
+  test_pdf_export_signal (SIGTERM);
+}
+
+static void
+test_pdf_export_rejects_source_destination (void)
+{
+  static const char source[] = "-- [white]\nSource must survive\n";
+  g_autofree char *directory = g_dir_make_tmp ("pinpoint-pdf-source-XXXXXX",
+                                               NULL);
+  g_autofree char *presentation = g_build_filename (directory,
+                                                    "talk.pin",
+                                                    NULL);
+  g_autofree char *output_option = g_strdup_printf ("--output=%s",
+                                                    presentation);
+  g_autofree char *contents = NULL;
+  g_autoptr (GError) error = NULL;
+  gsize length = 0;
+  const char *arguments[] = {
+    pinpoint_path,
+    output_option,
+    presentation,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = NULL;
+
+  g_assert_true (g_file_set_contents (presentation,
+                                      source,
+                                      strlen (source),
+                                      &error));
+  g_assert_no_error (error);
+  process = launch_application (arguments);
+  g_autofree char *stderr_text = finish_process (process, EXIT_FAILURE);
+  g_assert_nonnull (strstr (stderr_text,
+                            "PDF output must not replace the presentation source"));
+  g_assert_true (g_file_get_contents (presentation,
+                                      &contents,
+                                      &length,
+                                      &error));
+  g_assert_no_error (error);
+  g_assert_cmpmem (contents, length, source, strlen (source));
+  g_assert_cmpint (g_remove (presentation), ==, 0);
+  g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+static void
+test_pdf_export_rejects_source_alias (void)
+{
+  static const char source[] = "-- [white]\nAliased source must survive\n";
+  g_autofree char *directory = g_dir_make_tmp ("pinpoint-pdf-alias-XXXXXX",
+                                               NULL);
+  g_autofree char *alias_directory = g_build_filename (directory,
+                                                       "alias",
+                                                       NULL);
+  g_autofree char *presentation = g_build_filename (directory,
+                                                    "talk.pin",
+                                                    NULL);
+  g_autofree char *aliased_presentation = g_build_filename (alias_directory,
+                                                            "talk.pin",
+                                                            NULL);
+  g_autofree char *output_option = g_strdup_printf ("--output=%s",
+                                                    presentation);
+  g_autofree char *contents = NULL;
+  g_autoptr (GError) error = NULL;
+  gsize length = 0;
+  const char *arguments[] = {
+    pinpoint_path,
+    output_option,
+    aliased_presentation,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = NULL;
+
+  g_assert_true (g_file_set_contents (presentation,
+                                      source,
+                                      strlen (source),
+                                      &error));
+  g_assert_no_error (error);
+  g_assert_cmpint (symlink (".", alias_directory), ==, 0);
+  process = launch_application (arguments);
+  g_autofree char *stderr_text = finish_process (process, EXIT_FAILURE);
+  g_assert_nonnull (strstr (stderr_text,
+                            "PDF output must not replace the presentation source"));
+  g_assert_true (g_file_get_contents (presentation,
+                                      &contents,
+                                      &length,
+                                      &error));
+  g_assert_no_error (error);
+  g_assert_cmpmem (contents, length, source, strlen (source));
+  g_assert_cmpint (g_remove (alias_directory), ==, 0);
+  g_assert_cmpint (g_remove (presentation), ==, 0);
+  g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+static void
+test_rehearsal_ctrl_c_preserves_source (void)
+{
+  g_autofree char *directory = g_dir_make_tmp ("pinpoint-rehearse-signal-XXXXXX",
+                                               NULL);
+  g_autofree char *presentation = g_build_filename (directory,
+                                                    "rehearse.pin",
+                                                    NULL);
+  g_autofree char *source = NULL;
+  g_autofree char *contents = NULL;
+  g_autoptr (GError) error = NULL;
+  gsize source_length = 0;
+  gsize contents_length = 0;
+  const char *arguments[] = {
+    pinpoint_path,
+    "--rehearse",
+    presentation,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = NULL;
+
+  g_assert_true (g_file_get_contents (presentation_path,
+                                      &source,
+                                      &source_length,
+                                      &error));
+  g_assert_no_error (error);
+  g_assert_true (g_file_set_contents (presentation,
+                                      source,
+                                      source_length,
+                                      &error));
+  g_assert_no_error (error);
+  process = launch_application (arguments);
+  run_loop_for (750);
+  g_assert_true (process_is_running (process));
+  g_subprocess_send_signal (process, SIGINT);
+  g_autofree char *stderr_text = finish_process (process, 128 + SIGINT);
+  g_assert_null (strstr (stderr_text, "pinpoint: "));
+  g_assert_true (g_file_get_contents (presentation,
+                                      &contents,
+                                      &contents_length,
+                                      &error));
+  g_assert_no_error (error);
+  g_assert_cmpmem (contents, contents_length, source, source_length);
+  g_assert_cmpint (g_remove (presentation), ==, 0);
   g_assert_cmpint (g_rmdir (directory), ==, 0);
 }
 
@@ -582,7 +903,7 @@ test_subprocess_file_descriptor_stability (void)
     run_loop_for (300);
     g_assert_true (process_is_running (process));
     g_subprocess_send_signal (process, SIGTERM);
-    g_autofree char *stderr_text = finish_process (process, EXIT_SUCCESS);
+    g_autofree char *stderr_text = finish_process (process, 128 + SIGTERM);
     g_assert_null (strstr (stderr_text, "pinpoint:"));
   }
   run_loop_for (50);
@@ -596,7 +917,7 @@ test_subprocess_file_descriptor_stability (void)
       run_loop_for (300);
       g_assert_true (process_is_running (process));
       g_subprocess_send_signal (process, SIGTERM);
-      stderr_text = finish_process (process, EXIT_SUCCESS);
+      stderr_text = finish_process (process, 128 + SIGTERM);
       g_assert_null (strstr (stderr_text, "pinpoint:"));
       g_object_unref (process);
     }
@@ -609,11 +930,12 @@ main (int   argc,
       char *argv[])
 {
   g_test_init (&argc, &argv, NULL);
-  if (argc != 4)
+  if (argc != 5)
     return EXIT_FAILURE;
   pinpoint_path = argv[1];
   presentation_path = argv[2];
   media_presentation_path = argv[3];
+  legacy_transition_path = argv[4];
   if (!gtk_init_check ())
     return 77;
   g_test_add_func ("/application/fullscreen-speaker-shutdown",
@@ -627,10 +949,28 @@ main (int   argc,
   g_test_add_func ("/application/reload-then-shutdown",
                    test_reload_then_shutdown);
   g_test_add_func ("/application/invalid-pdf-option", test_invalid_pdf_option);
+  g_test_add_func ("/application/version", test_version);
+  g_test_add_func ("/application/check-presentation", test_check_presentation);
+  g_test_add_func ("/application/check-legacy-transition",
+                   test_check_legacy_transition);
+  g_test_add_func ("/application/check-missing-asset", test_check_missing_asset);
+  g_test_add_func ("/application/check-invalid-custom-transition",
+                   test_check_invalid_custom_transition);
+  g_test_add_func ("/application/multiple-presentations",
+                   test_multiple_presentations_are_rejected);
+  g_test_add_func ("/application/check-argument-errors",
+                   test_check_argument_errors);
   g_test_add_func ("/application/software-renderer-is-rejected",
                    test_software_renderer_is_rejected);
   g_test_add_func ("/application/pdf-export", test_pdf_export);
   g_test_add_func ("/application/pdf-export-ctrl-c", test_pdf_export_ctrl_c);
+  g_test_add_func ("/application/pdf-export-sigterm", test_pdf_export_sigterm);
+  g_test_add_func ("/application/pdf-export-source-destination",
+                   test_pdf_export_rejects_source_destination);
+  g_test_add_func ("/application/pdf-export-source-alias",
+                   test_pdf_export_rejects_source_alias);
+  g_test_add_func ("/application/rehearsal-ctrl-c",
+                   test_rehearsal_ctrl_c_preserves_source);
   g_test_add_func ("/application/process-fd-stability",
                    test_subprocess_file_descriptor_stability);
   return g_test_run ();
