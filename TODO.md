@@ -56,13 +56,31 @@ belongs here.
   keep the shared librsvg source as the sole production path rather than paying
   for a dual-parser fast path. `test-svg-renderers` preserves the compatibility,
   pixel-difference, fallback-signal, and indicative-cost comparison.
-- [ ] Resume hardware performance validation after the pending local update
-  unblocks Sysprof. Capture page-curl frame pacing, its one-time GSK-to-CPU-to-GL
-  transfer, peak texture residency, and colour consistency on representative
-  integrated and discrete GPUs; record negotiated video paths and offload
-  decisions on Wayland; check an external display; and run a long presentation
-  on battery. Test releasing uploaded page-curl source textures or persistent
-  mapped buffers only if those traces show material cost.
+- [ ] Recover the historical renderer's retained-scene CPU efficiency without
+  changing transition semantics. Three controlled installed-0.1.8 runs used
+  far fewer CPU samples than the GTK4 GL path, even after allowing for the old
+  renderer's lower frame rate and sampling variance. The old Clutter code keeps
+  slide actors alive and animates properties; the GTK4 stage reconstructs both
+  slide compositions each frame. A native crossfade reduced CPU but changed the
+  historical opacity curve, while static whole-slide node reuse added large
+  stalls and more samples, so both experiments were reverted. Treat 0.1.8 as a
+  performance reference and pursue finer retained composition only with pixel,
+  frame-pacing, media-offload, and CPU-capture proof. See
+  `docs/performance.md`.
+- [ ] Finish the remaining physical hardware performance matrix. Sysprof is now
+  working and repeatable GNOME 50 workloads cover page curl, the full bundled
+  introduction, its fade-heavy range, and its video range on the available
+  Tiger Lake Iris Xe and internal 2x eDP panel. GTK's Vulkan path held fades to
+  roughly 32 fps; GL reached roughly 59 fps with fewer than half the CPU
+  samples and preserved pixels and DMA-BUF video. Pinpoint now selects GL only
+  for the exact tested `8086:9a49` device, leaving other GPUs and explicit
+  overrides untouched. Page curl remains a trade-off: GL improved average frame
+  pacing but used 11% more CPU samples and showed setup stalls. Still run the
+  matrix on a representative discrete GPU, inspect colour on an external
+  display, and run a long representative presentation on battery; the current
+  RAPL captures were made on wall power. Only then generalize renderer policy
+  or consider persistent mapped buffers or deeper resource sharing. See
+  `docs/performance.md` for the commands and results.
 - [ ] Explore an optional GTK-native composition environment after the external
   editor integration is established. Keep `.pin` as the portable plain-text
   source format and external editors fully supported, while considering a

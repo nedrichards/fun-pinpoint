@@ -119,6 +119,184 @@ wait_for_transition_to_finish (PpStage *stage,
   g_assert_false (pp_stage_is_transitioning (stage));
 }
 
+typedef struct
+{
+  gboolean recording;
+  gint64 previous_frame_time;
+  guint transitions;
+  guint frames;
+  guint intervals;
+  double total_interval_ms;
+  double longest_interval_ms;
+  double current_longest_interval_ms;
+  guint over_20_ms;
+  guint over_25_ms;
+  guint over_34_ms;
+} ProfileFrameMetrics;
+
+typedef struct
+{
+  GMainLoop *loop;
+  PpStage *stage;
+  guint tick_id;
+  gboolean timed_out;
+} ProfileTransitionWait;
+
+static gboolean
+profile_transition_tick_cb (GtkWidget     *widget,
+                            GdkFrameClock *frame_clock,
+                            gpointer       user_data)
+{
+  ProfileTransitionWait *wait = user_data;
+
+  (void) widget;
+  (void) frame_clock;
+  if (pp_stage_is_transitioning (wait->stage))
+    return G_SOURCE_CONTINUE;
+
+  wait->tick_id = 0;
+  g_main_loop_quit (wait->loop);
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+profile_transition_timeout_cb (gpointer user_data)
+{
+  ProfileTransitionWait *wait = user_data;
+
+  wait->timed_out = TRUE;
+  g_main_loop_quit (wait->loop);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+wait_for_profile_transition (PpStage *stage,
+                             guint    timeout_ms)
+{
+  g_autoptr (GMainLoop) loop = g_main_loop_new (NULL, FALSE);
+  ProfileTransitionWait wait = {
+    .loop = loop,
+    .stage = stage,
+  };
+  guint timeout_id;
+
+  if (!pp_stage_is_transitioning (stage))
+    return;
+
+  wait.tick_id = gtk_widget_add_tick_callback (
+    GTK_WIDGET (stage),
+    profile_transition_tick_cb,
+    &wait,
+    NULL);
+  timeout_id = g_timeout_add (timeout_ms,
+                              profile_transition_timeout_cb,
+                              &wait);
+  g_main_loop_run (loop);
+  if (!wait.timed_out)
+    g_source_remove (timeout_id);
+  if (wait.tick_id != 0)
+    gtk_widget_remove_tick_callback (GTK_WIDGET (stage), wait.tick_id);
+  g_assert_false (pp_stage_is_transitioning (stage));
+}
+
+static void
+profile_after_paint_cb (GdkFrameClock *frame_clock,
+                        gpointer       user_data)
+{
+  ProfileFrameMetrics *metrics = user_data;
+  gint64 frame_time;
+
+  if (!metrics->recording)
+    return;
+
+  frame_time = gdk_frame_clock_get_frame_time (frame_clock);
+  metrics->frames++;
+  if (metrics->previous_frame_time != 0)
+    {
+      double interval_ms =
+        (frame_time - metrics->previous_frame_time) / 1000.0;
+
+      metrics->intervals++;
+      metrics->total_interval_ms += interval_ms;
+      metrics->longest_interval_ms = MAX (metrics->longest_interval_ms,
+                                          interval_ms);
+      metrics->current_longest_interval_ms = MAX (
+        metrics->current_longest_interval_ms,
+        interval_ms);
+      if (interval_ms > 20.0)
+        metrics->over_20_ms++;
+      if (interval_ms > 25.0)
+        metrics->over_25_ms++;
+      if (interval_ms > 34.0)
+        metrics->over_34_ms++;
+    }
+  metrics->previous_frame_time = frame_time;
+}
+
+static void
+profile_transition (PpStage             *stage,
+                    gboolean             forwards,
+                    ProfileFrameMetrics *metrics)
+{
+  const PpPresentation *presentation = pp_stage_get_presentation (stage);
+  guint from = pp_stage_get_current_slide (stage);
+  guint to = forwards ? from + 1 : from - 1;
+  const PpSlide *old_slide = pp_presentation_get_slide (presentation, from);
+  const PpSlide *new_slide = pp_presentation_get_slide (presentation, to);
+  guint frames_before = metrics->frames;
+  guint intervals_before = metrics->intervals;
+  double interval_ms_before = metrics->total_interval_ms;
+  gint64 started = g_get_monotonic_time ();
+  guint frames;
+  guint intervals;
+  double total_interval_ms;
+
+  metrics->recording = TRUE;
+  metrics->previous_frame_time = 0;
+  metrics->current_longest_interval_ms = 0.0;
+  metrics->transitions++;
+  if (forwards)
+    g_assert_true (pp_stage_next (stage));
+  else
+    g_assert_true (pp_stage_previous (stage));
+  wait_for_profile_transition (stage, 6000);
+  metrics->recording = FALSE;
+
+  frames = metrics->frames - frames_before;
+  intervals = metrics->intervals - intervals_before;
+  total_interval_ms = metrics->total_interval_ms - interval_ms_before;
+  g_print ("Transition %u->%u: old=%s new=%s, %.1f ms elapsed, "
+           "%u frames, %.3f ms average interval, %.3f ms longest\n",
+           from + 1,
+           to + 1,
+           old_slide->transition,
+           new_slide->transition,
+           (g_get_monotonic_time () - started) / 1000.0,
+           frames,
+           intervals > 0 ? total_interval_ms / intervals : 0.0,
+           metrics->current_longest_interval_ms);
+}
+
+static void
+print_profile_frame_metrics (const ProfileFrameMetrics *metrics)
+{
+  double average_ms = metrics->intervals > 0
+    ? metrics->total_interval_ms / metrics->intervals
+    : 0.0;
+
+  g_print ("Transition frame clock: %u transitions, %u frames, "
+           "%u intervals, %.3f ms average, %.3f ms longest, "
+           "%u >20 ms, %u >25 ms, %u >34 ms\n",
+           metrics->transitions,
+           metrics->frames,
+           metrics->intervals,
+           average_ms,
+           metrics->longest_interval_ms,
+           metrics->over_20_ms,
+           metrics->over_25_ms,
+           metrics->over_34_ms);
+}
+
 static void
 assert_page_curl_gl_ready (GtkWidget *stage)
 {
@@ -829,6 +1007,130 @@ test_page_curl_lifecycle (void)
   run_loop_for (100);
 }
 
+static int
+profile_presentation (const char *path,
+                      guint       cycles,
+                      guint       dwell_ms,
+                      gboolean    require_page_curl,
+                      guint       first_slide_number,
+                      guint       last_slide_number)
+{
+  g_autoptr (GtkApplication) application = create_application (
+    "com.nedrichards.pinpoint.PageCurlProfile");
+  g_autoptr (GFile) file = g_file_new_for_path (path);
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GError) error = NULL;
+  GtkWindow *window = GTK_WINDOW (gtk_application_window_new (application));
+  GtkWidget *stage = pp_stage_new ();
+  GtkSettings *settings;
+  GtkReducedMotion reduced_motion = GTK_REDUCED_MOTION_NO_PREFERENCE;
+  gboolean animations_enabled = TRUE;
+  guint slide_count;
+  guint first_slide;
+  guint last_slide;
+  ProfileFrameMetrics frame_metrics = { 0 };
+  GdkFrameClock *frame_clock;
+  gulong after_paint_id;
+
+  presentation = pp_presentation_load (file, FALSE, NULL, &error);
+  if (presentation == NULL)
+    {
+      g_printerr ("Unable to load profile presentation: %s\n",
+                  error->message);
+      return EXIT_FAILURE;
+    }
+  slide_count = pp_presentation_get_n_slides (presentation);
+  if (slide_count < 2)
+    {
+      g_printerr ("The profile presentation needs at least two slides\n");
+      return EXIT_FAILURE;
+    }
+  if (first_slide_number == 0)
+    first_slide_number = 1;
+  if (last_slide_number == 0)
+    last_slide_number = slide_count;
+  if (first_slide_number >= last_slide_number ||
+      last_slide_number > slide_count)
+    {
+      g_printerr ("Profile slide range %u-%u is outside the %u-slide deck\n",
+                  first_slide_number,
+                  last_slide_number,
+                  slide_count);
+      return EXIT_FAILURE;
+    }
+  first_slide = first_slide_number - 1;
+  last_slide = last_slide_number - 1;
+
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             g_steal_pointer (&presentation),
+                             first_slide);
+  gtk_window_set_child (window, stage);
+  gtk_window_maximize (window);
+  gtk_window_present (window);
+  run_loop_for (500);
+
+  settings = gtk_widget_get_settings (stage);
+  g_object_get (settings,
+                "gtk-enable-animations", &animations_enabled,
+                "gtk-interface-reduced-motion", &reduced_motion,
+                NULL);
+  if (!animations_enabled || reduced_motion == GTK_REDUCED_MOTION_REDUCE)
+    {
+      g_printerr ("Presentation profiling requires desktop animations and "
+                  "no reduced-motion preference\n");
+      gtk_window_destroy (window);
+      run_loop_for (100);
+      return 77;
+    }
+
+  frame_clock = gtk_widget_get_frame_clock (stage);
+  g_assert_nonnull (frame_clock);
+  after_paint_id = g_signal_connect (frame_clock,
+                                     "after-paint",
+                                     G_CALLBACK (profile_after_paint_cb),
+                                     &frame_metrics);
+
+  g_print ("Presentation profile: %dx%d logical pixels at %dx scale, "
+           "%u slides, range %u-%u, %u forward/backward cycles, "
+           "%u ms dwell\n",
+           gtk_widget_get_width (stage),
+           gtk_widget_get_height (stage),
+           gtk_widget_get_scale_factor (stage),
+           slide_count,
+           first_slide_number,
+           last_slide_number,
+           cycles,
+           dwell_ms);
+
+  /* Give an attaching profiler a stable idle baseline before the first move. */
+  run_loop_for (2000);
+  for (guint cycle = 0; cycle < cycles; cycle++)
+    {
+      for (guint slide = first_slide + 1; slide <= last_slide; slide++)
+        {
+          profile_transition (PP_STAGE (stage), TRUE, &frame_metrics);
+          if (dwell_ms > 0)
+            run_loop_for (dwell_ms);
+        }
+      for (guint slide = last_slide; slide > first_slide; slide--)
+        {
+          profile_transition (PP_STAGE (stage), FALSE, &frame_metrics);
+          if (dwell_ms > 0)
+            run_loop_for (dwell_ms);
+        }
+    }
+  if (require_page_curl)
+    assert_page_curl_gl_ready (stage);
+
+  /* Make post-transition idle and retained texture residency visible. */
+  run_loop_for (2000);
+  print_profile_frame_metrics (&frame_metrics);
+  g_signal_handler_disconnect (frame_clock, after_paint_id);
+  gtk_window_destroy (window);
+  run_loop_for (100);
+  return EXIT_SUCCESS;
+}
+
 static void
 test_native_transition_lifecycle (void)
 {
@@ -867,6 +1169,37 @@ int
 main (int   argc,
       char *argv[])
 {
+  if (argc == 3 && g_str_equal (argv[1], "--profile-page-curl"))
+    {
+      g_log_set_writer_func (test_log_writer, NULL, NULL);
+      gst_init (NULL, NULL);
+      if (!gtk_init_check ())
+        return 77;
+      return profile_presentation (argv[2], 2, 0, TRUE, 1, 0);
+    }
+  if (argc >= 3 && argc <= 7 &&
+      g_str_equal (argv[1], "--profile-presentation"))
+    {
+      guint64 cycles = argc >= 4 ? g_ascii_strtoull (argv[3], NULL, 10) : 1;
+      guint64 dwell_ms = argc >= 5 ? g_ascii_strtoull (argv[4], NULL, 10) : 250;
+      guint64 first_slide = argc >= 6 ? g_ascii_strtoull (argv[5], NULL, 10) : 1;
+      guint64 last_slide = argc >= 7 ? g_ascii_strtoull (argv[6], NULL, 10) : 0;
+
+      if (cycles == 0 || cycles > G_MAXUINT || dwell_ms > G_MAXUINT ||
+          first_slide == 0 || first_slide > G_MAXUINT ||
+          last_slide > G_MAXUINT)
+        return EXIT_FAILURE;
+      g_log_set_writer_func (test_log_writer, NULL, NULL);
+      gst_init (NULL, NULL);
+      if (!gtk_init_check ())
+        return 77;
+      return profile_presentation (argv[2],
+                                   cycles,
+                                   dwell_ms,
+                                   FALSE,
+                                   first_slide,
+                                   last_slide);
+    }
   if (argc != 9)
     return EXIT_FAILURE;
   fixture_path = argv[1];

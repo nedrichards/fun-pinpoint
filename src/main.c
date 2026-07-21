@@ -2311,6 +2311,64 @@ pinpoint_clear (Pinpoint *pinpoint)
   g_free (pinpoint->camera_device);
 }
 
+static gboolean
+drm_device_matches (const char *vendor_id,
+                    const char *device_id)
+{
+  g_autoptr (GDir) directory = g_dir_open ("/sys/class/drm", 0, NULL);
+  const char *name;
+
+  if (directory == NULL)
+    return FALSE;
+
+  while ((name = g_dir_read_name (directory)) != NULL)
+    {
+      g_autofree char *vendor_path = NULL;
+      g_autofree char *device_path = NULL;
+      g_autofree char *vendor = NULL;
+      g_autofree char *device = NULL;
+
+      if (!g_str_has_prefix (name, "card") ||
+          name[4] == '\0' ||
+          name[4] < '0' || name[4] > '9' ||
+          strspn (name + 4, "0123456789") != strlen (name + 4))
+        continue;
+      vendor_path = g_build_filename ("/sys/class/drm",
+                                      name,
+                                      "device",
+                                      "vendor",
+                                      NULL);
+      device_path = g_build_filename ("/sys/class/drm",
+                                      name,
+                                      "device",
+                                      "device",
+                                      NULL);
+      if (!g_file_get_contents (vendor_path, &vendor, NULL, NULL) ||
+          !g_file_get_contents (device_path, &device, NULL, NULL))
+        continue;
+      g_strstrip (vendor);
+      g_strstrip (device);
+      if (g_ascii_strcasecmp (vendor, vendor_id) == 0 &&
+          g_ascii_strcasecmp (device, device_id) == 0)
+        return TRUE;
+    }
+  return FALSE;
+}
+
+static void
+apply_renderer_workarounds (void)
+{
+  if (g_getenv ("GSK_RENDERER") != NULL)
+    return;
+
+  /* GTK 4.22's Vulkan renderer consistently halves transition throughput on
+   * the tested Tiger Lake Iris Xe at 2x scale. GL keeps the same DMA-BUF video
+   * path and pixel output while avoiding the driver-specific submission cost.
+   * Keep this exact so newer Intel and discrete GPUs retain GTK's default. */
+  if (drm_device_matches ("0x8086", "0x9a49"))
+    g_setenv ("GSK_RENDERER", "gl", FALSE);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -2358,6 +2416,7 @@ main (int   argc,
   pinpoint.sigterm_id = g_unix_signal_add (SIGTERM,
                                            termination_sigterm_cb,
                                            &pinpoint);
+  apply_renderer_workarounds ();
   gst_init (&argc, &argv);
 
   option_context = g_option_context_new ("- " PINPOINT_TAGLINE);
