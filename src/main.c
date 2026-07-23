@@ -1876,39 +1876,20 @@ export_selected_action_cb (GSimpleAction *action,
 }
 
 static void
-add_shortcut (AdwShortcutsSection *section,
-              const char          *title,
-              const char          *accelerator)
-{
-  g_autoptr (AdwShortcutsItem) item = adw_shortcuts_item_new (title,
-                                                               accelerator);
-
-  adw_shortcuts_section_add (section, item);
-}
-
-static void
 show_shortcuts_action_cb (GSimpleAction *action,
                           GVariant      *parameter,
                           gpointer       user_data)
 {
   Pinpoint *pinpoint = user_data;
-  g_autoptr (AdwShortcutsSection) setup = adw_shortcuts_section_new (
-    "Setup");
-  g_autoptr (AdwShortcutsSection) selected = adw_shortcuts_section_new (
-    "Selected Presentation");
-  AdwDialog *dialog = adw_shortcuts_dialog_new ();
+  g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
+    "/com/nedrichards/pinpoint/gtk/shortcuts-window.ui");
+  GtkWindow *dialog = GTK_WINDOW (gtk_builder_get_object (builder,
+                                                           "shortcuts_window"));
 
   (void) action;
   (void) parameter;
-  add_shortcut (setup, "Open a presentation folder", "<Primary>o");
-  add_shortcut (setup, "Show keyboard shortcuts", "<Primary>question");
-  add_shortcut (selected, "Present selected presentation", "<Primary>p");
-  add_shortcut (selected, "Rehearse selected presentation", "<Primary><Shift>r");
-  add_shortcut (selected, "Validate selected presentation", "<Primary><Shift>v");
-  add_shortcut (selected, "Export selected presentation to PDF", "<Primary>e");
-  adw_shortcuts_dialog_add (ADW_SHORTCUTS_DIALOG (dialog), setup);
-  adw_shortcuts_dialog_add (ADW_SHORTCUTS_DIALOG (dialog), selected);
-  adw_dialog_present (dialog, GTK_WIDGET (pinpoint->window));
+  gtk_window_set_transient_for (dialog, pinpoint->window);
+  gtk_window_present (dialog);
 }
 
 static void
@@ -2960,7 +2941,11 @@ activate_cb (GtkApplication *application,
                                          (const char *[]) { "<Primary>e", NULL });
   gtk_application_set_accels_for_action (application,
                                          "win.show-shortcuts",
-                                         (const char *[]) { "<Primary>question", NULL });
+                                         (const char *[]) {
+                                           "question",
+                                           "<Primary><Shift>slash",
+                                           NULL,
+                                         });
   gtk_stack_add_named (pinpoint->view_stack,
                        GTK_WIDGET (pinpoint->overlay),
                        "presentation");

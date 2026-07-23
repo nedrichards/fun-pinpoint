@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkShortcutsWindow" id="shortcuts_window">
+    <property name="modal">True</property>
+    <child>
+      <object class="GtkShortcutsSection">
+        <property name="section-name">shortcuts</property>
+        <property name="max-height">6</property>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">Setup</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Open a presentation folder</property>
+                <property name="action-name">win.open-presentation</property>
+                <property name="accelerator">&lt;Primary&gt;o</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Show keyboard shortcuts</property>
+                <property name="action-name">win.show-shortcuts</property>
+                <property name="accelerator">question</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">Selected Presentation</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Present</property>
+                <property name="action-name">win.present-selected</property>
+                <property name="accelerator">&lt;Primary&gt;p</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Rehearse</property>
+                <property name="action-name">win.rehearse-selected</property>
+                <property name="accelerator">&lt;Primary&gt;&lt;Shift&gt;r</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Validate</property>
+                <property name="action-name">win.validate-selected</property>
+                <property name="accelerator">&lt;Primary&gt;&lt;Shift&gt;v</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Export to PDF</property>
+                <property name="action-name">win.export-selected</property>
+                <property name="accelerator">&lt;Primary&gt;e</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">While Presenting</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Next slide</property>
+                <property name="accelerator">Right</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Previous slide</property>
+                <property name="accelerator">Left</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Toggle fullscreen</property>
+                <property name="accelerator">F11</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Show speaker view</property>
+                <property name="accelerator">F1</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

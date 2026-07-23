@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
+  <gresource prefix="/com/nedrichards/pinpoint">
+    <file preprocess="xml-stripblanks">gtk/shortcuts-window.ui</file>
+  </gresource>
   <gresource prefix="/com/nedrichards/pinpoint/introduction">
     <file alias="introduction.pin">introduction/introduction.pin</file>
     <file alias="bg.jpg">introduction/bg.jpg</file>
