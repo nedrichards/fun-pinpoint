@@ -92,6 +92,8 @@ static void set_presenting (Pinpoint *pinpoint,
 static void open_presentation_folder_dialog (Pinpoint *pinpoint);
 static void start_monitor (Pinpoint *pinpoint);
 static void update_selected_presentation (Pinpoint *pinpoint);
+static void set_selected_actions_enabled (Pinpoint *pinpoint,
+                                          gboolean  enabled);
 static void view_bundled_introduction (Pinpoint *pinpoint);
 
 static void
@@ -1164,6 +1166,7 @@ use_selected_presentation (Pinpoint *pinpoint)
       if (pinpoint->setup_selected_group != NULL)
         gtk_widget_set_visible (GTK_WIDGET (pinpoint->setup_selected_group),
                                 FALSE);
+      set_selected_actions_enabled (pinpoint, FALSE);
     }
 }
 
@@ -1242,6 +1245,28 @@ select_presentation (Pinpoint *pinpoint,
   if (pinpoint->welcome_banner != NULL)
     adw_banner_set_revealed (pinpoint->welcome_banner, FALSE);
   update_selected_presentation (pinpoint);
+  set_selected_actions_enabled (pinpoint, TRUE);
+}
+
+static void
+set_selected_actions_enabled (Pinpoint *pinpoint,
+                              gboolean  enabled)
+{
+  static const char *actions[] = {
+    "present-selected",
+    "rehearse-selected",
+    "validate-selected",
+    "export-selected",
+  };
+
+  for (guint i = 0; i < G_N_ELEMENTS (actions); i++)
+    {
+      GAction *action = g_action_map_lookup_action (
+        G_ACTION_MAP (pinpoint->window), actions[i]);
+
+      if (G_IS_SIMPLE_ACTION (action))
+        g_simple_action_set_enabled (G_SIMPLE_ACTION (action), enabled);
+    }
 }
 
 static void
@@ -1799,6 +1824,82 @@ documentation_action_cb (GSimpleAction *action,
 }
 
 static void
+present_selected_action_cb (GSimpleAction *action,
+                            GVariant      *parameter,
+                            gpointer       user_data)
+{
+  (void) action;
+  (void) parameter;
+  present_selected_clicked_cb (NULL, user_data);
+}
+
+static void
+rehearse_selected_action_cb (GSimpleAction *action,
+                             GVariant      *parameter,
+                             gpointer       user_data)
+{
+  (void) action;
+  (void) parameter;
+  rehearse_selected_clicked_cb (NULL, user_data);
+}
+
+static void
+validate_selected_action_cb (GSimpleAction *action,
+                             GVariant      *parameter,
+                             gpointer       user_data)
+{
+  (void) action;
+  (void) parameter;
+  validate_selected_clicked_cb (NULL, user_data);
+}
+
+static void
+export_selected_action_cb (GSimpleAction *action,
+                           GVariant      *parameter,
+                           gpointer       user_data)
+{
+  (void) action;
+  (void) parameter;
+  export_selected_clicked_cb (NULL, user_data);
+}
+
+static void
+add_shortcut (AdwShortcutsSection *section,
+              const char          *title,
+              const char          *accelerator)
+{
+  g_autoptr (AdwShortcutsItem) item = adw_shortcuts_item_new (title,
+                                                               accelerator);
+
+  adw_shortcuts_section_add (section, item);
+}
+
+static void
+show_shortcuts_action_cb (GSimpleAction *action,
+                          GVariant      *parameter,
+                          gpointer       user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  g_autoptr (AdwShortcutsSection) setup = adw_shortcuts_section_new (
+    "Setup");
+  g_autoptr (AdwShortcutsSection) selected = adw_shortcuts_section_new (
+    "Selected Presentation");
+  AdwDialog *dialog = adw_shortcuts_dialog_new ();
+
+  (void) action;
+  (void) parameter;
+  add_shortcut (setup, "Open a presentation folder", "<Primary>o");
+  add_shortcut (setup, "Show keyboard shortcuts", "<Primary>question");
+  add_shortcut (selected, "Present selected presentation", "<Primary>p");
+  add_shortcut (selected, "Rehearse selected presentation", "<Primary><Shift>r");
+  add_shortcut (selected, "Validate selected presentation", "<Primary><Shift>v");
+  add_shortcut (selected, "Export selected presentation to PDF", "<Primary>e");
+  adw_shortcuts_dialog_add (ADW_SHORTCUTS_DIALOG (dialog), setup);
+  adw_shortcuts_dialog_add (ADW_SHORTCUTS_DIALOG (dialog), selected);
+  adw_dialog_present (dialog, GTK_WIDGET (pinpoint->window));
+}
+
+static void
 about_action_cb (GSimpleAction *action,
                  GVariant      *parameter,
                  gpointer       user_data)
@@ -1878,6 +1979,11 @@ create_setup_view (Pinpoint *pinpoint)
     { .name = "save-introduction", .activate = save_introduction_action_cb },
     { .name = "open-presentation", .activate = open_presentation_action_cb },
     { .name = "export-pdf", .activate = export_pdf_action_cb },
+    { .name = "present-selected", .activate = present_selected_action_cb },
+    { .name = "rehearse-selected", .activate = rehearse_selected_action_cb },
+    { .name = "validate-selected", .activate = validate_selected_action_cb },
+    { .name = "export-selected", .activate = export_selected_action_cb },
+    { .name = "show-shortcuts", .activate = show_shortcuts_action_cb },
     { .name = "open-documentation", .parameter_type = "s",
       .activate = documentation_action_cb },
     { .name = "about", .activate = about_action_cb },
@@ -1932,6 +2038,7 @@ create_setup_view (Pinpoint *pinpoint)
   g_menu_append (menu,
                  "Accessibility",
                  "win.open-documentation::accessibility");
+  g_menu_append (menu, "Keyboard Shortcuts", "win.show-shortcuts");
   g_menu_append (menu, "About Pinpoint", "win.about");
   gtk_menu_button_set_icon_name (GTK_MENU_BUTTON (menu_button),
                                  "open-menu-symbolic");
@@ -2005,6 +2112,14 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_widget_add_css_class (rehearse, "pill");
   gtk_widget_add_css_class (validate, "flat");
   gtk_widget_add_css_class (export, "flat");
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (present),
+                                  "win.present-selected");
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (rehearse),
+                                  "win.rehearse-selected");
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (validate),
+                                  "win.validate-selected");
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (export),
+                                  "win.export-selected");
   gtk_box_append (GTK_BOX (selected_actions), present);
   gtk_box_append (GTK_BOX (selected_actions), rehearse);
   gtk_box_append (GTK_BOX (selected_actions), validate);
@@ -2013,22 +2128,7 @@ create_setup_view (Pinpoint *pinpoint)
   adw_preferences_group_add (pinpoint->setup_selected_group,
                              GTK_WIDGET (pinpoint->setup_selected_row));
   gtk_box_append (GTK_BOX (content), GTK_WIDGET (pinpoint->setup_selected_group));
-  g_signal_connect (present,
-                    "clicked",
-                    G_CALLBACK (present_selected_clicked_cb),
-                    pinpoint);
-  g_signal_connect (rehearse,
-                    "clicked",
-                    G_CALLBACK (rehearse_selected_clicked_cb),
-                    pinpoint);
-  g_signal_connect (validate,
-                    "clicked",
-                    G_CALLBACK (validate_selected_clicked_cb),
-                    pinpoint);
-  g_signal_connect (export,
-                    "clicked",
-                    G_CALLBACK (export_selected_clicked_cb),
-                    pinpoint);
+  set_selected_actions_enabled (pinpoint, FALSE);
 
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (learn_group),
                                    "Need a Starting Point?");
@@ -2613,6 +2713,24 @@ activate_cb (GtkApplication *application,
   gtk_stack_add_named (pinpoint->view_stack,
                        create_setup_view (pinpoint),
                        "setup");
+  gtk_application_set_accels_for_action (application,
+                                         "win.open-presentation",
+                                         (const char *[]) { "<Primary>o", NULL });
+  gtk_application_set_accels_for_action (application,
+                                         "win.present-selected",
+                                         (const char *[]) { "<Primary>p", NULL });
+  gtk_application_set_accels_for_action (application,
+                                         "win.rehearse-selected",
+                                         (const char *[]) { "<Primary><Shift>r", NULL });
+  gtk_application_set_accels_for_action (application,
+                                         "win.validate-selected",
+                                         (const char *[]) { "<Primary><Shift>v", NULL });
+  gtk_application_set_accels_for_action (application,
+                                         "win.export-selected",
+                                         (const char *[]) { "<Primary>e", NULL });
+  gtk_application_set_accels_for_action (application,
+                                         "win.show-shortcuts",
+                                         (const char *[]) { "<Primary>question", NULL });
   gtk_stack_add_named (pinpoint->view_stack,
                        GTK_WIDGET (pinpoint->overlay),
                        "presentation");
