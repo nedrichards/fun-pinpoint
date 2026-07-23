@@ -82,6 +82,15 @@ No known automated 0.1.8 parser or renderer parity gaps remain. The initial
 real-hardware multi-display release gate is complete; repeat it when the GTK,
 GNOME, or display-assignment code changes materially.
 
+## Deliberate Flatpak-first difference
+
+Pinpoint 0.1.8 wrote `#!/usr/bin/env pinpoint` when serializing a presentation
+for rehearsal. Current Pinpoint still accepts that first-line comment for
+historical decks, but does not generate it for new or rehearsed `.pin` files.
+The Flatpak application is opened through the portal-backed setup workflow or
+an explicit `flatpak run --filesystem=…` command; a host executable shebang
+cannot provide that narrow, per-presentation filesystem grant.
+
 ## Manual hardware validation
 
 Two-display Wayland validation passed on 19 July 2026 with a 2256×1504
@@ -126,3 +135,10 @@ Hardware profiling and every other open task are tracked in the central
 does not request permission to execute arbitrary host commands. Presentations
 that use commands should bundle or otherwise target tools available inside the
 Flatpak, or migrate actions to portal-backed file and URI opening.
+
+For a trusted development-only demonstration, a caller may temporarily grant
+`--talk-name=org.freedesktop.Flatpak` and use
+`flatpak-spawn --host flatpak run --user APP_ID` from an embedded command to
+start an installed Flatpak. This is intentionally a launch-time override, not
+a production permission: it permits host-command execution and must not be
+used for untrusted presentations.

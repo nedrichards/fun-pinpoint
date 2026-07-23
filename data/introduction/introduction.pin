@@ -1,13 +1,13 @@
-#!/usr/bin/env pinpoint
-
 [bg.jpg]
 [font=Sans 50px]
 [duration=5.000000]
 -- [duration=4.448699]
 Welcome to pinpoint
+#@alt: Several weathered cars are piled among dense green trees in a woodland.
 
 -- [duration=3.393199]
 A tool for making excellent presentations
+#@alt: The same woodland scene of stacked, abandoned cars continues behind the text.
 
 -- [bowls.jpg] [duration=4.322308]
 It has a simple text source
@@ -15,9 +15,9 @@ It has a simple text source
 #These comments should fit on screen
 #The comments wrap
 #Using up/down should overstrike the speaker points?
+#@alt: White tulips and long green leaves sit in clear glass bowls on a warmly lit table.
 -- [font=monospace 18px] [shading-opacity=1.000000] [duration=23.560078]
 The current presentation thus far:
- #!/usr/bin/env pinpoint
  [font=Sans 50px]
  [bg.jpg]
 
@@ -55,9 +55,11 @@ set a custom background for an individual slide
 
 -- [bunny.webm] [fill] [duration=24.458597]
 You can put <b>anything</b> in the background
+#@alt: An animated clip from Big Buck Bunny plays behind the slide text.
 
 -- [linus.jpg] [fill] [bottom-left] [duration=3.724967]
 But, slides with cat pictures are best
+#@alt: A black cat with yellow eyes sits beside a window.
 
 -- [text-align=right] [top-right] [duration=1.879800]
 position text in the
@@ -138,18 +140,20 @@ F11 - toggle fullscreen!
 -- [transition=text-slide-down] [duration=2.167284]
 Escape - quit pinpoint
 
--- [fill] [transition=slide-in-left] [command=killall xeyes ; xeyes] [duration=16.965691]
-Enter - Run command
-Tab - Edit command
-[command=killall xeyes ; xeyes]
+-- [fill] [transition=slide-in-left] [command=flatpak-spawn --host flatpak run --user org.gnome.TextEditor] [duration=16.965691]
+Enter - Launch a Flatpak app
+Tab - Edit the app ID
+[command=flatpak-spawn --host flatpak run --user org.gnome.TextEditor]
 
-N.B. run pinpoint with the -m option
-and hidden or auto-hiding panels, to
-allow window management in fullscreen.
+For this developer demo, start Pinpoint with
+\--talk-name=org.freedesktop.Flatpak. Replace
+org.gnome.TextEditor with your app's Flatpak ID.
+#@alt: A developer demonstration slide explaining that its command starts a Flatpak application on the host.
 
 -- [linus.jpg] [fill] [bottom-right] [duration=7.079270]
 That's pretty much everything.
 Told you it was simple.
+#@alt: The black cat beside a window returns as the closing image.
 
 -- [black] [font=Sans 100px] [transition=spin-text]
 FIN

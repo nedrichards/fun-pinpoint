@@ -30,14 +30,18 @@ a broken transition.
 
 ## Author responsibility
 
-Audience text is available to assistive technology, but the historical `.pin`
-format has no backward-compatible field for alternative descriptions of image,
-video, SVG, or camera backgrounds. Unknown bracketed settings deliberately mean
-“background”, so introducing an `[alt=…]` setting would make the same file render
-incorrectly in historical Pinpoint. Authors should therefore avoid relying on
-an uncaptioned visual as the only source of essential information. The central
-[Pinpoint backlog](../TODO.md) owns the work to design visual descriptions
-without violating that historical parser rule.
+Audience text and `#@alt:` visual descriptions are available to assistive
+technology. Use one or more `#@alt:` lines for information conveyed by an
+image, video, SVG, or camera background that the audience text does not already
+say. Pinpoint joins those lines into the stage description after the visible
+audience text; they do not appear in the speaker-note pane.
+
+The directive deliberately uses the existing first-column comment syntax.
+Unknown bracketed settings mean “background” in the historical parser, so an
+`[alt=…]` setting would make a legacy Pinpoint render the same file incorrectly.
+Pinpoint 0.1.8 instead treats `#@alt:` as an ordinary speaker note and leaves
+the audience output intact. Authors should still avoid relying on an
+uncaptioned visual as the only source of essential information.
 
 Colour contrast inside a slide is likewise selected by the presentation
 author. Pinpoint retains the historical shading controls and defaults to a

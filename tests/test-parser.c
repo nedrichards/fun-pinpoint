@@ -75,6 +75,52 @@ test_ignore_comments (void)
 }
 
 static void
+test_visual_description (void)
+{
+  static const char *source =
+    "-- [photo.jpg]\n"
+    "Audience text\n"
+    "#@alt:A hand-drawn chart has three rising bars.\n"
+    "#@alt:The final bar is tallest.\n"
+    "#Speaker reminder\n";
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (PpPresentation) ignored = NULL;
+  g_autoptr (PpPresentation) round_trip = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autofree char *serialized = NULL;
+  const PpSlide *slide;
+
+  presentation = pp_presentation_parse (source, NULL, FALSE, &error);
+  g_assert_no_error (error);
+  slide = pp_presentation_get_slide (presentation, 0);
+  g_assert_cmpstr (slide->speaker_notes, ==, "Speaker reminder\n");
+  g_assert_cmpstr (slide->visual_description, ==,
+                   "A hand-drawn chart has three rising bars.\n"
+                   "The final bar is tallest.\n");
+
+  ignored = pp_presentation_parse (source, NULL, TRUE, &error);
+  g_assert_no_error (error);
+  g_assert_null (pp_presentation_get_slide (ignored, 0)->speaker_notes);
+  g_assert_cmpstr (pp_presentation_get_slide (ignored, 0)->visual_description,
+                   ==,
+                   "A hand-drawn chart has three rising bars.\n"
+                   "The final bar is tallest.\n");
+
+  serialized = pp_presentation_serialize (presentation);
+  g_assert_nonnull (strstr (serialized,
+                            "#@alt:A hand-drawn chart has three rising bars.\n"
+                            "#@alt:The final bar is tallest.\n"
+                            "#Speaker reminder\n"));
+  round_trip = pp_presentation_parse (serialized, NULL, FALSE, &error);
+  g_assert_no_error (error);
+  slide = pp_presentation_get_slide (round_trip, 0);
+  g_assert_cmpstr (slide->visual_description, ==,
+                   "A hand-drawn chart has three rising bars.\n"
+                   "The final bar is tallest.\n");
+  g_assert_cmpstr (slide->speaker_notes, ==, "Speaker reminder\n");
+}
+
+static void
 test_invalid_source (void)
 {
   g_autoptr (PpPresentation) presentation = NULL;
@@ -266,7 +312,9 @@ test_rehearsal_serialization (void)
   ((PpSlide *) pp_presentation_get_slide (presentation, 0))->duration = 5.0;
   ((PpSlide *) pp_presentation_get_slide (presentation, 1))->duration = 8.5;
   serialized = pp_presentation_serialize (presentation);
-  g_assert_true (g_str_has_prefix (serialized, "#!/usr/bin/env pinpoint\n"));
+  g_assert_false (g_str_has_prefix (serialized, "#!"));
+  g_assert_true (g_str_has_prefix (serialized,
+                                   "[stage-color=#112233][duration=10.000000]\n--"));
   g_assert_nonnull (strstr (serialized, "-- [white] [top] [duration=5.000000]"));
   g_assert_nonnull (strstr (serialized, "#A note\n"));
   g_assert_nonnull (strstr (serialized, "-- [duration=8.500000] [no-markup]"));
@@ -1758,6 +1806,7 @@ main (int   argc,
 
   g_test_add_func ("/parser/compatibility", test_compatibility_fixture);
   g_test_add_func ("/parser/ignore-comments", test_ignore_comments);
+  g_test_add_func ("/parser/visual-description", test_visual_description);
   g_test_add_func ("/parser/invalid-source", test_invalid_source);
   g_test_add_func ("/parser/historical-video-suffixes",
                    test_historical_video_suffixes);

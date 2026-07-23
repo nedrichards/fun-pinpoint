@@ -492,6 +492,7 @@ test_stage_accessibility (void)
   GtkWidget *stage = pp_stage_new ();
   g_autoptr (PpPresentation) invalid_markup = NULL;
   g_autoptr (PpPresentation) empty_slide = NULL;
+  g_autoptr (PpPresentation) visual_description_slide = NULL;
   g_autoptr (GError) error = NULL;
 
   g_object_ref_sink (stage);
@@ -555,6 +556,21 @@ test_stage_accessibility (void)
   gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
                                        GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
                                        "Slide has no audience text");
+
+  visual_description_slide = pp_presentation_parse (
+    "-- [chart.svg]\nAudience summary\n#@alt:Three rising bars; Q4 is highest.\n",
+    NULL,
+    FALSE,
+    &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (visual_description_slide);
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             g_steal_pointer (&visual_description_slide),
+                             0);
+  gtk_test_accessible_assert_property (GTK_ACCESSIBLE (stage),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                       "Audience summary\nVisual description: "
+                                       "Three rising bars; Q4 is highest.");
 
   g_object_unref (stage);
 }

@@ -68,6 +68,7 @@ pp_slide_copy (const PpSlide *source)
   slide->notes_font_size = g_strdup (source->notes_font_size);
   slide->text_color = g_strdup (source->text_color);
   slide->speaker_notes = g_strdup (source->speaker_notes);
+  slide->visual_description = g_strdup (source->visual_description);
   slide->shading_color = g_strdup (source->shading_color);
   slide->transition = g_strdup (source->transition);
   slide->transition_easing = g_strdup (source->transition_easing);
@@ -90,6 +91,7 @@ pp_slide_free (PpSlide *slide)
   g_free (slide->notes_font_size);
   g_free (slide->text_color);
   g_free (slide->speaker_notes);
+  g_free (slide->visual_description);
   g_free (slide->shading_color);
   g_free (slide->transition);
   g_free (slide->transition_easing);
@@ -457,7 +459,8 @@ static void
 finish_slide (PpPresentation *presentation,
               PpSlide        *slide,
               GString        *text,
-              GString        *notes)
+              GString        *notes,
+              GString        *visual_description)
 {
   gsize start = 0;
   gsize end = text->len;
@@ -471,6 +474,8 @@ finish_slide (PpPresentation *presentation,
   slide->text = g_strndup (text->str + start, end - start);
   if (notes->len > 0)
     replace_string (&slide->speaker_notes, notes->str);
+  if (visual_description->len > 0)
+    replace_string (&slide->visual_description, visual_description->str);
   classify_background (presentation, slide);
   g_ptr_array_add (presentation->slides, slide);
 }
@@ -484,6 +489,7 @@ pp_presentation_parse_with_stage_color (const char  *source,
 {
   g_autoptr (GString) text = NULL;
   g_autoptr (GString) notes = NULL;
+  g_autoptr (GString) visual_description = NULL;
   g_autoptr (GString) settings = NULL;
   PpPresentation *presentation;
   PpSlide *slide;
@@ -518,6 +524,7 @@ pp_presentation_parse_with_stage_color (const char  *source,
 
   text = g_string_new (NULL);
   notes = g_string_new (NULL);
+  visual_description = g_string_new (NULL);
   settings = g_string_new (NULL);
   slide = pp_slide_copy (presentation->defaults);
   length = strlen (source);
@@ -574,13 +581,14 @@ pp_presentation_parse_with_stage_color (const char  *source,
             }
           else
             {
-              finish_slide (presentation, slide, text, notes);
+              finish_slide (presentation, slide, text, notes, visual_description);
               slide = next_slide;
               next_slide = NULL;
             }
 
           g_string_truncate (text, 0);
           g_string_truncate (notes, 0);
+          g_string_truncate (visual_description, 0);
           start_of_line = TRUE;
 
           if (current == '\0')
@@ -590,14 +598,23 @@ pp_presentation_parse_with_stage_color (const char  *source,
 
       if (current == '#' && start_of_line)
         {
+          gboolean is_visual_description;
+
           position++;
+          is_visual_description = g_str_has_prefix (source + position, "@alt:");
+          if (is_visual_description)
+            position += strlen ("@alt:");
           while (position < length && source[position] != '\n')
             {
-              if (!ignore_comments)
+              if (is_visual_description)
+                g_string_append_c (visual_description, source[position]);
+              else if (!ignore_comments)
                 g_string_append_c (notes, source[position]);
               position++;
             }
-          if (!ignore_comments)
+          if (is_visual_description)
+            g_string_append_c (visual_description, '\n');
+          else if (!ignore_comments)
             g_string_append_c (notes, '\n');
           if (position < length && source[position] == '\n')
             position++;
@@ -820,6 +837,23 @@ append_string_setting (GString    *output,
 }
 
 static void
+append_comment_lines (GString    *output,
+                      const char *prefix,
+                      const char *text)
+{
+  if (text == NULL)
+    return;
+
+  g_string_append_printf (output, "#%s", prefix);
+  for (const char *p = text; *p != '\0'; p++)
+    {
+      g_string_append_c (output, *p);
+      if (*p == '\n' && p[1] != '\0')
+        g_string_append_printf (output, "#%s", prefix);
+    }
+}
+
+static void
 append_gravity (GString    *output,
                 const char *separator,
                 const char *name,
@@ -989,30 +1023,24 @@ pp_presentation_serialize (const PpPresentation *self)
 
   g_return_val_if_fail (self != NULL, NULL);
 
-  output = g_string_new ("#!/usr/bin/env pinpoint\n");
+  output = g_string_new (NULL);
   built_in_defaults = pp_slide_new ();
-  append_slide_config (output, self->defaults, built_in_defaults, "\n");
+  append_slide_config (output, self->defaults, built_in_defaults, "");
   pp_slide_free (built_in_defaults);
 
   for (guint i = 0; i < self->slides->len; i++)
     {
       const PpSlide *slide = g_ptr_array_index (self->slides, i);
 
-      g_string_append (output, "\n--");
+      if (output->len > 0)
+        g_string_append_c (output, '\n');
+      g_string_append (output, "--");
       append_slide_config (output, slide, self->defaults, " ");
       g_string_append_c (output, '\n');
       g_string_append_printf (output, "%s\n", slide->text);
 
-      if (slide->speaker_notes != NULL)
-        {
-          g_string_append_c (output, '#');
-          for (const char *p = slide->speaker_notes; *p != '\0'; p++)
-            {
-              g_string_append_c (output, *p);
-              if (*p == '\n' && p[1] != '\0')
-                g_string_append_c (output, '#');
-            }
-        }
+      append_comment_lines (output, "@alt:", slide->visual_description);
+      append_comment_lines (output, "", slide->speaker_notes);
     }
 
   return g_string_free (g_steal_pointer (&output), FALSE);

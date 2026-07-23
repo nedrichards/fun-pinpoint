@@ -112,6 +112,7 @@ main (int   argc,
   assert_class_at (buffer, text, "\"yellow\"", "pinpoint-pango-value");
   assert_class_at (buffer, text, "&amp; clear", "pinpoint-pango-markup");
   assert_class_at (buffer, text, "#Speaker note", "pinpoint-speaker-note");
+  assert_class_at (buffer, text, "#@alt:", "pinpoint-visual-description");
   assert_no_class_at (buffer,
                       text,
                       "<b>tags</b>",

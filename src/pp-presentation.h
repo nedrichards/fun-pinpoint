@@ -91,6 +91,7 @@ typedef struct _PpSlide
   double duration;
   double new_duration;
   char *speaker_notes;
+  char *visual_description;
 
   char *shading_color;
   double shading_opacity;

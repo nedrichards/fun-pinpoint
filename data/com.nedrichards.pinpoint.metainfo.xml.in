@@ -24,8 +24,16 @@
   <launchable type="desktop-id">com.nedrichards.pinpoint.desktop</launchable>
   <screenshots>
     <screenshot type="default">
-      <image>https://dl.flathub.org/media/org/gnome/Pinpoint/aa9580a618997a6f42f4053e04e7f06c/screenshots/image-1_orig.png</image>
-      <caption>Pinpoint presenting its own plain-text introduction</caption>
+      <image>https://raw.githubusercontent.com/nedrichards/fun-pinpoint/main/docs/screenshots/launch.png</image>
+      <caption>Start a plain-text presentation from Pinpoint's setup screen</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/nedrichards/fun-pinpoint/main/docs/screenshots/audience.png</image>
+      <caption>Audience view turns concise source into image-led slides</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/nedrichards/fun-pinpoint/main/docs/screenshots/speaker.png</image>
+      <caption>Speaker view shows notes and adjacent-slide previews</caption>
     </screenshot>
   </screenshots>
   <branding>

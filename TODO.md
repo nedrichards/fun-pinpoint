@@ -6,21 +6,6 @@ belongs here.
 
 ## Open work
 
-- [ ] Contribute the Pinpoint language definition to GtkSourceView so Flatpak
-  editors receive it from their runtime. Native packages install it directly;
-  until the upstream definition reaches the GNOME runtime, sandboxed GNOME Text
-  Editor uses the documented per-user installation path because one Flatpak
-  cannot modify another application's `/app`.
-- [ ] Replace the inherited Pinpoint 0.1.8 AppStream screenshot before a
-  supported release. Capture the current GTK 4 launch, audience, and speaker
-  experiences at representative sizes, keep the images in a stable public
-  location, and make the captions express the plain-text hacker workflow.
-- [ ] Design a backward-compatible way to describe visual backgrounds to
-  assistive technology. The historical parser treats every unknown bracketed
-  setting as a background, so a new `[alt=…]` field would break the same file in
-  Pinpoint 0.1.8. Evaluate a comment convention, sidecar metadata, or a versioned
-  format extension; then expose the chosen description on the stage and add
-  compatibility and accessibility fixtures.
 - [ ] Evaluate phone remote control once a real paired-device setup is
   available. Test Valent or GSConnect plus a phone before selecting an adapter.
   If those paths cannot provide a reliable presentation remote, prove the
@@ -37,23 +22,6 @@ belongs here.
   must remain windowed and paused without replaying commands, media, camera, or
   rehearsal. GTK owns instance storage and window geometry; Pinpoint supplies
   the shared presentation state and per-window audience/speaker roles.
-- [x] Finish PDF export memory bounds and cancellation. Interactive exports now
-  show slide progress with an explicit Cancel action; CLI exports use the same
-  cancellable worker, turn Ctrl+C into a clean exit, and show progress on a TTY.
-  Raster and video backgrounds are capped at a 144-DPI-equivalent export bound,
-  only the most recent decoded surface is retained, and the destination is
-  replaced only after a complete successful render.
-- [x] Compare GTK 4.22's `GtkSvg` paintable with librsvg. On GTK 4.22.4 the
-  existing pixel fixture is visually equivalent (mean channel difference
-  0.006/255, with 0.007% of pixels outside the existing tolerance), and
-  `GtkSvg` records its 320x240 node a few microseconds faster. Cold parsing is
-  the same order of magnitude, while `GtkSvg` reports unsupported `<style>`,
-  `<textPath>`, and `<feTurbulence>` content that librsvg accepts. Because
-  Pinpoint already caches each size-specific node, PDF export still needs
-  librsvg's Cairo rendering, and the dependency therefore cannot be removed,
-  keep the shared librsvg source as the sole production path rather than paying
-  for a dual-parser fast path. `test-svg-renderers` preserves the compatibility,
-  pixel-difference, fallback-signal, and indicative-cost comparison.
 - [ ] Recover the historical renderer's retained-scene CPU efficiency without
   changing transition semantics. Three controlled installed-0.1.8 runs used
   far fewer CPU samples than the GTK4 GL path, even after allowing for the old
@@ -86,8 +54,44 @@ belongs here.
   Builder: diagnostics, completion for settings and assets, slide navigation,
   and a live quality-accurate preview. Keep its dependencies and runtime cost
   out of the lean presentation path when the editor is not installed or used.
+- [ ] Contribute the Pinpoint language definition to GtkSourceView so Flatpak
+  editors receive it from their runtime. Native packages install it directly;
+  until the upstream definition reaches the GNOME runtime, sandboxed GNOME Text
+  Editor uses the documented per-user installation path because one Flatpak
+  cannot modify another application's `/app`.
 
 ## Completed work
+
+- [x] Replace the inherited Pinpoint 0.1.8 AppStream screenshot before a
+  supported release. Repository-hosted captures now show the GTK 4 launch,
+  audience, and speaker experiences at representative sizes, with captions
+  describing the plain-text presentation workflow.
+
+- [x] Finish PDF export memory bounds and cancellation. Interactive exports now
+  show slide progress with an explicit Cancel action; CLI exports use the same
+  cancellable worker, turn Ctrl+C into a clean exit, and show progress on a TTY.
+  Raster and video backgrounds are capped at a 144-DPI-equivalent export bound,
+  only the most recent decoded surface is retained, and the destination is
+  replaced only after a complete successful render.
+
+- [x] Compare GTK 4.22's `GtkSvg` paintable with librsvg. On GTK 4.22.4 the
+  existing pixel fixture is visually equivalent (mean channel difference
+  0.006/255, with 0.007% of pixels outside the existing tolerance), and
+  `GtkSvg` records its 320x240 node a few microseconds faster. Cold parsing is
+  the same order of magnitude, while `GtkSvg` reports unsupported `<style>`,
+  `<textPath>`, and `<feTurbulence>` content that librsvg accepts. Because
+  Pinpoint already caches each size-specific node, PDF export still needs
+  librsvg's Cairo rendering, and the dependency therefore cannot be removed,
+  keep the shared librsvg source as the sole production path rather than paying
+  for a dual-parser fast path. `test-svg-renderers` preserves the compatibility,
+  pixel-difference, fallback-signal, and indicative-cost comparison.
+
+- [x] Add backward-compatible visual descriptions for informative slide
+  backgrounds. `#@alt:` uses a specialised first-column speaker-note line, so
+  current Pinpoint exposes it through the stage accessibility description while
+  Pinpoint 0.1.8 leaves the audience rendering unchanged and shows it as a
+  normal speaker note. The parser, round-trip serialization, GTK stage, editor
+  definition, documentation, and bundled introduction cover the directive.
 
 - [x] Audit and harden the command-line contract without breaking valid 0.1.8
   invocations. PDF export now rejects its source file and path aliases to it;

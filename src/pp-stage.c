@@ -583,14 +583,29 @@ update_accessibility (PpStage *self)
       const PpSlide *slide = pp_presentation_get_slide (self->presentation,
                                                         self->current_slide);
       guint count = pp_presentation_get_n_slides (self->presentation);
+      g_autofree char *audience_text = NULL;
+      g_autofree char *visual_description = NULL;
 
       label = g_strdup_printf ("%s %u of %u",
                                context,
                                self->current_slide + 1,
                                count);
-      description = self->blank
-        ? g_strdup ("Blank screen")
-        : slide_accessible_text (slide);
+      if (self->blank)
+        description = g_strdup ("Blank screen");
+      else
+        {
+          audience_text = slide_accessible_text (slide);
+          visual_description = g_strstrip (g_strdup (slide->visual_description != NULL
+                                                     ? slide->visual_description
+                                                     : ""));
+          if (visual_description[0] != '\0')
+            description = audience_text != NULL && audience_text[0] != '\0'
+              ? g_strdup_printf ("%s\nVisual description: %s",
+                                 audience_text, visual_description)
+              : g_strdup_printf ("Visual description: %s", visual_description);
+          else
+            description = g_steal_pointer (&audience_text);
+        }
       if (description == NULL || description[0] == '\0')
         {
           g_clear_pointer (&description, g_free);
