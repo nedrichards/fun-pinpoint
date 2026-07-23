@@ -43,6 +43,7 @@ typedef struct
   AdwComboRow *setup_audience_monitor;
   AdwPreferencesGroup *setup_selected_group;
   AdwActionRow *setup_selected_row;
+  AdwBanner *welcome_banner;
   GPtrArray *setup_monitor_choices;
   PpSpeaker *speaker;
   GFile *file;
@@ -78,6 +79,7 @@ typedef struct
   GdkMonitor *presenter_monitor;
   GdkMonitor *audience_monitor;
   gboolean updating_monitor_choices;
+  GSettings *settings;
 } Pinpoint;
 
 static void set_fullscreen (Pinpoint *pinpoint,
@@ -89,6 +91,7 @@ static void set_presenting (Pinpoint *pinpoint,
 static void open_presentation_folder_dialog (Pinpoint *pinpoint);
 static void start_monitor (Pinpoint *pinpoint);
 static void update_selected_presentation (Pinpoint *pinpoint);
+static void view_bundled_introduction (Pinpoint *pinpoint);
 
 static void
 clear_source_id (guint *source_id)
@@ -1233,6 +1236,10 @@ select_presentation (Pinpoint *pinpoint,
   pinpoint->bundled_read_only = FALSE;
   pinpoint->exporting_pdf = FALSE;
   g_set_object (&pinpoint->file, file);
+  if (pinpoint->settings != NULL)
+    g_settings_set_boolean (pinpoint->settings, "welcome-complete", TRUE);
+  if (pinpoint->welcome_banner != NULL)
+    adw_banner_set_revealed (pinpoint->welcome_banner, FALSE);
   update_selected_presentation (pinpoint);
 }
 
@@ -1580,6 +1587,18 @@ get_application_icon_name (Pinpoint *pinpoint)
 }
 
 static void
+welcome_banner_clicked_cb (AdwBanner *banner,
+                           gpointer   user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  if (pinpoint->settings != NULL)
+    g_settings_set_boolean (pinpoint->settings, "welcome-complete", TRUE);
+  adw_banner_set_revealed (banner, FALSE);
+  view_bundled_introduction (pinpoint);
+}
+
+static void
 view_bundled_introduction (Pinpoint *pinpoint)
 {
   g_autoptr (GFile) presentation = pp_introduction_get_presentation ();
@@ -1843,6 +1862,8 @@ create_setup_view (Pinpoint *pinpoint)
   GtkWidget *hero_title = gtk_label_new ("Open a Presentation");
   GtkWidget *hero_description = gtk_label_new (
     "Choose a folder containing a .pin file and its assets.");
+  GtkWidget *welcome_banner = adw_banner_new (
+    "New to Pinpoint? Open a folder, edit its .pin file, and Pinpoint reloads it live.");
   GtkWidget *learn_group = adw_preferences_group_new ();
   GtkWidget *learn_row = adw_action_row_new ();
   GtkWidget *learn_icon = gtk_image_new_from_icon_name (
@@ -1901,6 +1922,20 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_box_append (GTK_BOX (hero), hero_title);
   gtk_box_append (GTK_BOX (hero), hero_description);
   gtk_box_append (GTK_BOX (content), hero);
+
+  pinpoint->welcome_banner = ADW_BANNER (welcome_banner);
+  adw_banner_set_button_label (pinpoint->welcome_banner, "Try Introduction");
+  adw_banner_set_button_style (pinpoint->welcome_banner,
+                               ADW_BANNER_BUTTON_SUGGESTED);
+  adw_banner_set_revealed (
+    pinpoint->welcome_banner,
+    pinpoint->settings != NULL &&
+    !g_settings_get_boolean (pinpoint->settings, "welcome-complete"));
+  g_signal_connect (pinpoint->welcome_banner,
+                    "button-clicked",
+                    G_CALLBACK (welcome_banner_clicked_cb),
+                    pinpoint);
+  gtk_box_append (GTK_BOX (content), welcome_banner);
 
   gtk_box_set_homogeneous (GTK_BOX (buttons), TRUE);
   gtk_widget_set_hexpand (open, TRUE);
@@ -2407,6 +2442,21 @@ motion_leave_cb (GtkEventControllerMotion *controller,
 }
 
 static void
+load_settings (Pinpoint *pinpoint)
+{
+  GSettingsSchemaSource *source = g_settings_schema_source_get_default ();
+  g_autoptr (GSettingsSchema) schema = NULL;
+
+  if (source == NULL)
+    return;
+  schema = g_settings_schema_source_lookup (source,
+                                            PINPOINT_APPLICATION_ID,
+                                            TRUE);
+  if (schema != NULL)
+    pinpoint->settings = g_settings_new_full (schema, NULL, NULL);
+}
+
+static void
 activate_cb (GtkApplication *application,
              gpointer        user_data)
 {
@@ -2425,6 +2475,7 @@ activate_cb (GtkApplication *application,
       return;
     }
 
+  load_settings (pinpoint);
   pinpoint->window = GTK_WINDOW (adw_application_window_new (application));
   g_signal_connect (pinpoint->window,
                     "close-request",
@@ -2570,6 +2621,7 @@ pinpoint_clear (Pinpoint *pinpoint)
   g_clear_pointer (&pinpoint->speaker, pp_speaker_free);
   g_clear_pointer (&pinpoint->mpris, pp_mpris_free);
   g_clear_object (&pinpoint->control);
+  g_clear_object (&pinpoint->settings);
   if (pinpoint->window != NULL)
     {
       gtk_window_destroy (pinpoint->window);

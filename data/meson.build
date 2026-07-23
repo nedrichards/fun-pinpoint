@@ -32,6 +32,25 @@ install_data(
   install_dir: get_option('datadir') / 'mime/packages',
 )
 
+settings_schema = files('com.nedrichards.pinpoint.gschema.xml')
+
+install_data(
+  settings_schema,
+  install_dir: get_option('datadir') / 'glib-2.0/schemas',
+)
+
+custom_target(
+  'compile-settings-schema',
+  input: settings_schema,
+  output: 'gschemas.compiled',
+  command: [find_program('glib-compile-schemas'),
+            '--targetdir', '@OUTDIR@',
+            meson.current_source_dir()],
+  build_by_default: true,
+  install: true,
+  install_dir: get_option('datadir') / 'glib-2.0/schemas',
+)
+
 pinpoint_language = files('pinpoint.lang')
 
 install_data(
