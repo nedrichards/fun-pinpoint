@@ -41,6 +41,8 @@ typedef struct
   AdwSwitchRow *setup_speaker;
   AdwSwitchRow *setup_ignore_comments;
   AdwComboRow *setup_audience_monitor;
+  AdwPreferencesGroup *setup_selected_group;
+  AdwActionRow *setup_selected_row;
   GPtrArray *setup_monitor_choices;
   PpSpeaker *speaker;
   GFile *file;
@@ -86,6 +88,7 @@ static void set_presenting (Pinpoint *pinpoint,
                             gboolean  presenting);
 static void open_presentation_folder_dialog (Pinpoint *pinpoint);
 static void start_monitor (Pinpoint *pinpoint);
+static void update_selected_presentation (Pinpoint *pinpoint);
 
 static void
 clear_source_id (guint *source_id)
@@ -240,33 +243,32 @@ run_cli_pdf_export (Pinpoint *pinpoint,
   return EXIT_SUCCESS;
 }
 
-static int
-run_cli_check (Pinpoint *pinpoint)
+static gboolean
+validate_presentation (Pinpoint  *pinpoint,
+                       guint     *n_slides_out,
+                       GError   **error)
 {
   g_autoptr (PpPresentation) presentation = NULL;
   g_autoptr (GHashTable) checked_transitions = NULL;
-  g_autoptr (GError) error = NULL;
-  g_autofree char *display_name = g_file_get_parse_name (pinpoint->file);
   g_autofree char *missing_asset = NULL;
   guint n_slides;
 
   presentation = pp_presentation_load (pinpoint->file,
                                        pinpoint->ignore_comments,
                                        NULL,
-                                       &error);
+                                       error);
   if (presentation == NULL)
-    {
-      g_printerr ("pinpoint: %s: %s\n", display_name, error->message);
-      return EXIT_FAILURE;
-    }
+    return FALSE;
 
   missing_asset = pp_render_find_missing_relative_asset (presentation);
   if (missing_asset != NULL)
     {
-      g_printerr ("pinpoint: %s: missing relative asset “%s”\n",
-                  display_name,
-                  missing_asset);
-      return EXIT_FAILURE;
+      g_set_error (error,
+                   PP_PRESENTATION_ERROR,
+                   PP_PRESENTATION_ERROR_IO,
+                   "missing relative asset “%s”",
+                   missing_asset);
+      return FALSE;
     }
 
   checked_transitions = g_hash_table_new_full (g_str_hash,
@@ -284,17 +286,31 @@ run_cli_check (Pinpoint *pinpoint)
           pp_transition_is_builtin (name) ||
           g_hash_table_contains (checked_transitions, name))
         continue;
-      transition = pp_legacy_transition_load (presentation, name, &error);
+      transition = pp_legacy_transition_load (presentation, name, error);
       if (transition == NULL)
         {
-          g_printerr ("pinpoint: %s: slide %u transition “%s”: %s\n",
-                      display_name,
-                      i + 1,
-                      name,
-                      error->message);
-          return EXIT_FAILURE;
+          g_prefix_error (error, "slide %u transition “%s”: ", i + 1, name);
+          return FALSE;
         }
       g_hash_table_add (checked_transitions, g_strdup (name));
+    }
+
+  if (n_slides_out != NULL)
+    *n_slides_out = n_slides;
+  return TRUE;
+}
+
+static int
+run_cli_check (Pinpoint *pinpoint)
+{
+  g_autoptr (GError) error = NULL;
+  g_autofree char *display_name = g_file_get_parse_name (pinpoint->file);
+  guint n_slides;
+
+  if (!validate_presentation (pinpoint, &n_slides, &error))
+    {
+      g_printerr ("pinpoint: %s: %s\n", display_name, error->message);
+      return EXIT_FAILURE;
     }
 
   g_print ("%s: valid Pinpoint presentation (%u %s)\n",
@@ -1141,7 +1157,83 @@ use_selected_presentation (Pinpoint *pinpoint)
     {
       g_clear_object (&pinpoint->file);
       set_window_title (pinpoint);
+      if (pinpoint->setup_selected_group != NULL)
+        gtk_widget_set_visible (GTK_WIDGET (pinpoint->setup_selected_group),
+                                FALSE);
     }
+}
+
+static void
+update_selected_presentation (Pinpoint *pinpoint)
+{
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autofree char *basename = NULL;
+  g_autoptr (GString) details = NULL;
+  guint visual_assets = 0;
+  guint videos = 0;
+  guint notes = 0;
+
+  if (pinpoint->setup_selected_group == NULL || pinpoint->file == NULL)
+    return;
+
+  basename = g_file_get_basename (pinpoint->file);
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (pinpoint->setup_selected_row),
+                                 basename);
+  presentation = pp_presentation_load (pinpoint->file,
+                                       pinpoint->ignore_comments,
+                                       NULL,
+                                       &error);
+  if (presentation == NULL)
+    {
+      adw_action_row_set_subtitle (pinpoint->setup_selected_row,
+                                   "Select Validate to see why this deck cannot be opened");
+      gtk_widget_set_visible (GTK_WIDGET (pinpoint->setup_selected_group), TRUE);
+      return;
+    }
+
+  details = g_string_new (NULL);
+  g_string_append_printf (details,
+                          "%u %s",
+                          pp_presentation_get_n_slides (presentation),
+                          pp_presentation_get_n_slides (presentation) == 1
+                            ? "slide" : "slides");
+  for (guint i = 0; i < pp_presentation_get_n_slides (presentation); i++)
+    {
+      const PpSlide *slide = pp_presentation_get_slide (presentation, i);
+
+      if (slide->background_type == PP_BACKGROUND_IMAGE ||
+          slide->background_type == PP_BACKGROUND_SVG)
+        visual_assets++;
+      else if (slide->background_type == PP_BACKGROUND_VIDEO)
+        videos++;
+      if (slide->speaker_notes != NULL && slide->speaker_notes[0] != '\0')
+        notes++;
+    }
+  if (visual_assets > 0)
+    g_string_append_printf (details,
+                            " · %u visual %s",
+                            visual_assets,
+                            visual_assets == 1 ? "asset" : "assets");
+  if (videos > 0)
+    g_string_append_printf (details,
+                            " · %u %s",
+                            videos,
+                            videos == 1 ? "video" : "videos");
+  if (notes > 0)
+    g_string_append (details, " · speaker notes");
+  adw_action_row_set_subtitle (pinpoint->setup_selected_row, details->str);
+  gtk_widget_set_visible (GTK_WIDGET (pinpoint->setup_selected_group), TRUE);
+}
+
+static void
+select_presentation (Pinpoint *pinpoint,
+                     GFile    *file)
+{
+  pinpoint->bundled_read_only = FALSE;
+  pinpoint->exporting_pdf = FALSE;
+  g_set_object (&pinpoint->file, file);
+  update_selected_presentation (pinpoint);
 }
 
 static void
@@ -1155,8 +1247,13 @@ presentation_choose_clicked_cb (GtkButton *button,
 
   if (dialog != NULL)
     adw_dialog_close (ADW_DIALOG (dialog));
-  g_set_object (&pinpoint->file, file);
-  use_selected_presentation (pinpoint);
+  if (pinpoint->exporting_pdf)
+    {
+      g_set_object (&pinpoint->file, file);
+      use_selected_presentation (pinpoint);
+    }
+  else
+    select_presentation (pinpoint, file);
 }
 
 static void
@@ -1271,8 +1368,13 @@ folder_dialog_selected_cb (GObject      *source,
       return;
     }
 
-  g_set_object (&pinpoint->file, g_ptr_array_index (files, 0));
-  use_selected_presentation (pinpoint);
+  if (pinpoint->exporting_pdf)
+    {
+      g_set_object (&pinpoint->file, g_ptr_array_index (files, 0));
+      use_selected_presentation (pinpoint);
+    }
+  else
+    select_presentation (pinpoint, g_ptr_array_index (files, 0));
 }
 
 static void
@@ -1305,28 +1407,86 @@ apply_setup_options (Pinpoint *pinpoint,
 }
 
 static void
-open_for_mode (Pinpoint *pinpoint,
-               gboolean  rehearse)
+open_presentation_clicked_cb (GtkButton *button,
+                              gpointer   user_data)
 {
-  apply_setup_options (pinpoint, rehearse);
-  pinpoint->bundled_read_only = FALSE;
+  (void) button;
+  Pinpoint *pinpoint = user_data;
+
+  pinpoint->exporting_pdf = FALSE;
   open_presentation_folder_dialog (pinpoint);
 }
 
 static void
-present_clicked_cb (GtkButton *button,
-                    gpointer   user_data)
+start_selected_presentation (Pinpoint *pinpoint,
+                             gboolean  rehearse)
 {
-  (void) button;
-  open_for_mode (user_data, FALSE);
+  apply_setup_options (pinpoint, rehearse);
+  use_selected_presentation (pinpoint);
 }
 
 static void
-rehearse_clicked_cb (GtkButton *button,
-                     gpointer   user_data)
+present_selected_clicked_cb (GtkButton *button,
+                             gpointer   user_data)
 {
   (void) button;
-  open_for_mode (user_data, TRUE);
+  start_selected_presentation (user_data, FALSE);
+}
+
+static void
+rehearse_selected_clicked_cb (GtkButton *button,
+                              gpointer   user_data)
+{
+  (void) button;
+  start_selected_presentation (user_data, TRUE);
+}
+
+static void
+export_selected_clicked_cb (GtkButton *button,
+                            gpointer   user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  (void) button;
+  pinpoint->ignore_comments =
+    adw_switch_row_get_active (pinpoint->setup_ignore_comments);
+  export_selected_presentation (pinpoint);
+}
+
+static void
+validate_selected_clicked_cb (GtkButton *button,
+                              gpointer   user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  g_autoptr (GError) error = NULL;
+  g_autofree char *basename = g_file_get_basename (pinpoint->file);
+  g_autofree char *body = NULL;
+  guint n_slides;
+  AdwAlertDialog *dialog;
+
+  (void) button;
+  pinpoint->ignore_comments =
+    adw_switch_row_get_active (pinpoint->setup_ignore_comments);
+  if (validate_presentation (pinpoint, &n_slides, &error))
+    {
+      body = g_strdup_printf ("%s is valid and has %u %s.",
+                              basename,
+                              n_slides,
+                              n_slides == 1 ? "slide" : "slides");
+      dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new ("Presentation Is Valid",
+                                                       body));
+    }
+  else
+    {
+      body = g_strdup_printf ("%s cannot be presented yet:\n%s",
+                              basename,
+                              error->message);
+      dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new ("Validation Failed",
+                                                       body));
+    }
+  adw_alert_dialog_add_response (dialog, "close", "Close");
+  adw_alert_dialog_set_close_response (dialog, "close");
+  adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (pinpoint->window));
 }
 
 static void
@@ -1692,8 +1852,12 @@ create_setup_view (Pinpoint *pinpoint)
     "document-save-symbolic");
   GtkWidget *group = adw_preferences_group_new ();
   GtkWidget *buttons = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
-  GtkWidget *present = gtk_button_new_with_label ("Present…");
-  GtkWidget *rehearse = gtk_button_new_with_label ("Rehearse…");
+  GtkWidget *open = gtk_button_new_with_label ("Open Presentation Folder…");
+  GtkWidget *selected_actions = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+  GtkWidget *present = gtk_button_new_with_label ("Present");
+  GtkWidget *rehearse = gtk_button_new_with_label ("Rehearse");
+  GtkWidget *validate = gtk_button_new_with_label ("Validate");
+  GtkWidget *export = gtk_button_new_with_label ("Export PDF…");
   GtkExpression *expression;
 
   g_action_map_add_action_entries (G_ACTION_MAP (pinpoint->window),
@@ -1739,16 +1903,51 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_box_append (GTK_BOX (content), hero);
 
   gtk_box_set_homogeneous (GTK_BOX (buttons), TRUE);
-  gtk_widget_set_hexpand (present, TRUE);
+  gtk_widget_set_hexpand (open, TRUE);
+  gtk_widget_add_css_class (open, "suggested-action");
+  gtk_widget_add_css_class (open, "pill");
+  gtk_box_append (GTK_BOX (buttons), open);
+  gtk_box_append (GTK_BOX (content), buttons);
+  g_signal_connect (open,
+                    "clicked",
+                    G_CALLBACK (open_presentation_clicked_cb),
+                    pinpoint);
+
+  pinpoint->setup_selected_group = ADW_PREFERENCES_GROUP (
+    adw_preferences_group_new ());
+  pinpoint->setup_selected_row = ADW_ACTION_ROW (adw_action_row_new ());
+  adw_preferences_group_set_title (pinpoint->setup_selected_group,
+                                   "Selected Presentation");
+  gtk_widget_set_visible (GTK_WIDGET (pinpoint->setup_selected_group), FALSE);
   gtk_widget_add_css_class (present, "suggested-action");
   gtk_widget_add_css_class (present, "pill");
-  gtk_widget_set_hexpand (rehearse, TRUE);
   gtk_widget_add_css_class (rehearse, "pill");
-  gtk_box_append (GTK_BOX (buttons), present);
-  gtk_box_append (GTK_BOX (buttons), rehearse);
-  gtk_box_append (GTK_BOX (content), buttons);
-  g_signal_connect (present, "clicked", G_CALLBACK (present_clicked_cb), pinpoint);
-  g_signal_connect (rehearse, "clicked", G_CALLBACK (rehearse_clicked_cb), pinpoint);
+  gtk_widget_add_css_class (validate, "flat");
+  gtk_widget_add_css_class (export, "flat");
+  gtk_box_append (GTK_BOX (selected_actions), present);
+  gtk_box_append (GTK_BOX (selected_actions), rehearse);
+  gtk_box_append (GTK_BOX (selected_actions), validate);
+  gtk_box_append (GTK_BOX (selected_actions), export);
+  adw_action_row_add_suffix (pinpoint->setup_selected_row, selected_actions);
+  adw_preferences_group_add (pinpoint->setup_selected_group,
+                             GTK_WIDGET (pinpoint->setup_selected_row));
+  gtk_box_append (GTK_BOX (content), GTK_WIDGET (pinpoint->setup_selected_group));
+  g_signal_connect (present,
+                    "clicked",
+                    G_CALLBACK (present_selected_clicked_cb),
+                    pinpoint);
+  g_signal_connect (rehearse,
+                    "clicked",
+                    G_CALLBACK (rehearse_selected_clicked_cb),
+                    pinpoint);
+  g_signal_connect (validate,
+                    "clicked",
+                    G_CALLBACK (validate_selected_clicked_cb),
+                    pinpoint);
+  g_signal_connect (export,
+                    "clicked",
+                    G_CALLBACK (export_selected_clicked_cb),
+                    pinpoint);
 
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (learn_group),
                                    "Need a Starting Point?");
