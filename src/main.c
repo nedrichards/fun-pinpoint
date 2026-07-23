@@ -26,6 +26,7 @@
 #define PORTAL_BUS_NAME "org.freedesktop.portal.Desktop"
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
 #define OPEN_URI_INTERFACE "org.freedesktop.portal.OpenURI"
+#define DOCUMENTATION_BASE_URI "https://github.com/nedrichards/fun-pinpoint/blob/main/docs/"
 
 typedef struct
 {
@@ -1769,6 +1770,35 @@ export_pdf_action_cb (GSimpleAction *action,
 }
 
 static void
+open_presentation_action_cb (GSimpleAction *action,
+                             GVariant      *parameter,
+                             gpointer       user_data)
+{
+  (void) action;
+  (void) parameter;
+  open_presentation_clicked_cb (NULL, user_data);
+}
+
+static void
+documentation_action_cb (GSimpleAction *action,
+                         GVariant      *parameter,
+                         gpointer       user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  const char *document = g_variant_get_string (parameter, NULL);
+  g_autofree char *uri = NULL;
+  g_autoptr (GError) error = NULL;
+
+  (void) action;
+  uri = g_strconcat (DOCUMENTATION_BASE_URI, document, ".md", NULL);
+  if (!g_app_info_launch_default_for_uri (uri, NULL, &error))
+    show_folder_problem (pinpoint,
+                         "Unable to Open Documentation",
+                         error->message,
+                         FALSE);
+}
+
+static void
 about_action_cb (GSimpleAction *action,
                  GVariant      *parameter,
                  gpointer       user_data)
@@ -1846,7 +1876,10 @@ create_setup_view (Pinpoint *pinpoint)
   static const GActionEntry actions[] = {
     { .name = "view-introduction", .activate = view_introduction_action_cb },
     { .name = "save-introduction", .activate = save_introduction_action_cb },
+    { .name = "open-presentation", .activate = open_presentation_action_cb },
     { .name = "export-pdf", .activate = export_pdf_action_cb },
+    { .name = "open-documentation", .parameter_type = "s",
+      .activate = documentation_action_cb },
     { .name = "about", .activate = about_action_cb },
   };
   const char *icon_name = get_application_icon_name (pinpoint);
@@ -1885,7 +1918,20 @@ create_setup_view (Pinpoint *pinpoint)
                                    actions,
                                    G_N_ELEMENTS (actions),
                                    pinpoint);
+  g_menu_append (menu, "Open Presentation Folder…", "win.open-presentation");
   g_menu_append (menu, "Export to PDF…", "win.export-pdf");
+  g_menu_append (menu,
+                 "Presentation Format",
+                 "win.open-documentation::presentation-format");
+  g_menu_append (menu,
+                 "Command Line and Flatpak",
+                 "win.open-documentation::command-line");
+  g_menu_append (menu,
+                 "External Editors",
+                 "win.open-documentation::external-editors");
+  g_menu_append (menu,
+                 "Accessibility",
+                 "win.open-documentation::accessibility");
   g_menu_append (menu, "About Pinpoint", "win.about");
   gtk_menu_button_set_icon_name (GTK_MENU_BUTTON (menu_button),
                                  "open-menu-symbolic");
