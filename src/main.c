@@ -37,6 +37,7 @@ typedef struct
   PpMpris *mpris;
   GtkOverlay *overlay;
   GtkEntry *command_entry;
+  GtkButton *end_presentation_button;
   GtkStack *view_stack;
   AdwSwitchRow *setup_fullscreen;
   AdwSwitchRow *setup_speaker;
@@ -55,6 +56,7 @@ typedef struct
   guint monitor_poll_id;
   char *monitor_revision;
   guint hide_cursor_id;
+  guint hide_end_presentation_id;
   guint sigint_id;
   guint sigterm_id;
   guint inhibit_cookie;
@@ -91,6 +93,8 @@ static void set_presenting (Pinpoint *pinpoint,
                             gboolean  presenting);
 static void open_presentation_folder_dialog (Pinpoint *pinpoint);
 static void start_monitor (Pinpoint *pinpoint);
+static void hide_end_presentation_control (Pinpoint *pinpoint);
+static void reveal_end_presentation_control (Pinpoint *pinpoint);
 static void update_selected_presentation (Pinpoint *pinpoint);
 static void set_selected_actions_enabled (Pinpoint *pinpoint,
                                           gboolean  enabled);
@@ -492,6 +496,8 @@ slide_changed_cb (PpStage *stage,
                    slide->text_position == PP_GRAVITY_BOTTOM_RIGHT;
   gtk_widget_set_valign (GTK_WIDGET (pinpoint->command_entry),
                          text_at_bottom ? GTK_ALIGN_START : GTK_ALIGN_END);
+  if (index + 1 < pp_presentation_get_n_slides (presentation))
+    hide_end_presentation_control (pinpoint);
 }
 
 static void
@@ -2538,15 +2544,82 @@ mouse_pressed_cb (GtkGestureClick *gesture,
 {
   Pinpoint *pinpoint = user_data;
   guint button = gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture));
+  GdkDevice *device = gtk_event_controller_get_current_event_device (
+    GTK_EVENT_CONTROLLER (gesture));
+  const PpPresentation *presentation = pp_stage_get_presentation (pinpoint->stage);
+  gboolean is_final_slide = presentation != NULL &&
+    pp_stage_get_current_slide (pinpoint->stage) + 1 >=
+    pp_presentation_get_n_slides (presentation);
 
   (void) n_press;
   (void) x;
   (void) y;
 
+  if (button == GDK_BUTTON_PRIMARY && device != NULL &&
+      gdk_device_get_source (device) == GDK_SOURCE_TOUCHSCREEN &&
+      is_final_slide)
+    {
+      reveal_end_presentation_control (pinpoint);
+      return;
+    }
+
   if (button == GDK_BUTTON_PRIMARY)
     pp_control_activate (pinpoint->control, PP_CONTROL_ACTION_NEXT);
   else if (button == GDK_BUTTON_SECONDARY)
     pp_control_activate (pinpoint->control, PP_CONTROL_ACTION_PREVIOUS);
+}
+
+static gboolean
+hide_end_presentation_control_cb (gpointer user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  pinpoint->hide_end_presentation_id = 0;
+  if (pinpoint->end_presentation_button != NULL)
+    gtk_widget_set_visible (GTK_WIDGET (pinpoint->end_presentation_button),
+                            FALSE);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+hide_end_presentation_control (Pinpoint *pinpoint)
+{
+  clear_source_id (&pinpoint->hide_end_presentation_id);
+  if (pinpoint->end_presentation_button != NULL)
+    gtk_widget_set_visible (GTK_WIDGET (pinpoint->end_presentation_button),
+                            FALSE);
+}
+
+static void
+reveal_end_presentation_control (Pinpoint *pinpoint)
+{
+  const PpPresentation *presentation = pp_stage_get_presentation (pinpoint->stage);
+
+  if (presentation == NULL ||
+      pp_stage_get_current_slide (pinpoint->stage) + 1 <
+        pp_presentation_get_n_slides (presentation))
+    return;
+
+  gtk_widget_set_visible (GTK_WIDGET (pinpoint->end_presentation_button), TRUE);
+  clear_source_id (&pinpoint->hide_end_presentation_id);
+  pinpoint->hide_end_presentation_id = g_timeout_add (2000,
+                                                       hide_end_presentation_control_cb,
+                                                       pinpoint);
+}
+
+static void
+end_presentation_clicked_cb (GtkButton *button,
+                             gpointer   user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  (void) button;
+  hide_end_presentation_control (pinpoint);
+  pp_stage_next (pinpoint->stage);
+  set_fullscreen (pinpoint, FALSE);
+  set_speaker_visible (pinpoint, FALSE);
+  set_presenting (pinpoint, FALSE);
+  gtk_stack_set_visible_child_name (pinpoint->view_stack, "setup");
 }
 
 static gboolean
@@ -2573,6 +2646,7 @@ motion_cb (GtkEventControllerMotion *controller,
 
   clear_source_id (&pinpoint->hide_cursor_id);
   gtk_widget_set_cursor_from_name (GTK_WIDGET (pinpoint->stage), "default");
+  reveal_end_presentation_control (pinpoint);
   pinpoint->hide_cursor_id = g_timeout_add (500, hide_cursor_cb, pinpoint);
 }
 
@@ -2632,6 +2706,34 @@ activate_cb (GtkApplication *application,
   pp_stage_set_camera_device (pinpoint->stage, pinpoint->camera_device);
   pinpoint->overlay = GTK_OVERLAY (gtk_overlay_new ());
   gtk_overlay_set_child (pinpoint->overlay, GTK_WIDGET (pinpoint->stage));
+
+  pinpoint->end_presentation_button = GTK_BUTTON (
+    gtk_button_new_from_icon_name ("window-close-symbolic"));
+  gtk_widget_set_halign (GTK_WIDGET (pinpoint->end_presentation_button),
+                         GTK_ALIGN_END);
+  gtk_widget_set_valign (GTK_WIDGET (pinpoint->end_presentation_button),
+                         GTK_ALIGN_START);
+  gtk_widget_set_margin_top (GTK_WIDGET (pinpoint->end_presentation_button), 16);
+  gtk_widget_set_margin_end (GTK_WIDGET (pinpoint->end_presentation_button), 16);
+  gtk_widget_add_css_class (GTK_WIDGET (pinpoint->end_presentation_button),
+                            "circular");
+  gtk_widget_add_css_class (GTK_WIDGET (pinpoint->end_presentation_button),
+                            "osd");
+  gtk_widget_set_tooltip_text (GTK_WIDGET (pinpoint->end_presentation_button),
+                               "End Presentation");
+  gtk_accessible_update_property (
+    GTK_ACCESSIBLE (pinpoint->end_presentation_button),
+    GTK_ACCESSIBLE_PROPERTY_LABEL,
+    "End Presentation",
+    -1);
+  gtk_widget_set_visible (GTK_WIDGET (pinpoint->end_presentation_button),
+                          FALSE);
+  gtk_overlay_add_overlay (pinpoint->overlay,
+                           GTK_WIDGET (pinpoint->end_presentation_button));
+  g_signal_connect (pinpoint->end_presentation_button,
+                    "clicked",
+                    G_CALLBACK (end_presentation_clicked_cb),
+                    pinpoint);
 
   pinpoint->command_entry = GTK_ENTRY (gtk_entry_new ());
   gtk_widget_set_halign (GTK_WIDGET (pinpoint->command_entry), GTK_ALIGN_FILL);
@@ -2768,6 +2870,7 @@ pinpoint_clear (Pinpoint *pinpoint)
   clear_source_id (&pinpoint->reload_id);
   clear_source_id (&pinpoint->monitor_poll_id);
   clear_source_id (&pinpoint->hide_cursor_id);
+  clear_source_id (&pinpoint->hide_end_presentation_id);
   clear_source_id (&pinpoint->sigint_id);
   clear_source_id (&pinpoint->sigterm_id);
   g_clear_object (&pinpoint->monitor);
@@ -2791,6 +2894,7 @@ pinpoint_clear (Pinpoint *pinpoint)
       gtk_window_destroy (pinpoint->window);
       pinpoint->window = NULL;
     }
+  pinpoint->end_presentation_button = NULL;
   g_clear_object (&pinpoint->application);
   g_free (pinpoint->camera_device);
 }
