@@ -1680,9 +1680,9 @@ create_setup_view (Pinpoint *pinpoint)
   GtkWidget *content = gtk_box_new (GTK_ORIENTATION_VERTICAL, 18);
   GtkWidget *hero = gtk_box_new (GTK_ORIENTATION_VERTICAL, 10);
   GtkWidget *hero_icon = gtk_image_new_from_icon_name (icon_name);
-  GtkWidget *hero_title = gtk_label_new (PINPOINT_TAGLINE);
+  GtkWidget *hero_title = gtk_label_new ("Open a Presentation");
   GtkWidget *hero_description = gtk_label_new (
-    "Write concise slides in your text editor, then tune them live.");
+    "Choose a folder containing a .pin file and its assets.");
   GtkWidget *learn_group = adw_preferences_group_new ();
   GtkWidget *learn_row = adw_action_row_new ();
   GtkWidget *learn_icon = gtk_image_new_from_icon_name (
@@ -1722,12 +1722,12 @@ create_setup_view (Pinpoint *pinpoint)
   adw_clamp_set_child (ADW_CLAMP (clamp), content);
   gtk_widget_set_margin_start (content, 24);
   gtk_widget_set_margin_end (content, 24);
-  gtk_widget_set_margin_top (content, 12);
+  gtk_widget_set_margin_top (content, 8);
   gtk_widget_set_margin_bottom (content, 18);
 
   gtk_widget_set_halign (hero, GTK_ALIGN_CENTER);
-  gtk_widget_set_margin_top (hero, 6);
-  gtk_image_set_pixel_size (GTK_IMAGE (hero_icon), 128);
+  gtk_widget_set_margin_top (hero, 2);
+  gtk_image_set_pixel_size (GTK_IMAGE (hero_icon), 64);
   gtk_widget_add_css_class (hero_icon, "accent");
   gtk_widget_add_css_class (hero_title, "title-1");
   gtk_widget_add_css_class (hero_description, "dim-label");
@@ -1738,8 +1738,20 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_box_append (GTK_BOX (hero), hero_description);
   gtk_box_append (GTK_BOX (content), hero);
 
+  gtk_box_set_homogeneous (GTK_BOX (buttons), TRUE);
+  gtk_widget_set_hexpand (present, TRUE);
+  gtk_widget_add_css_class (present, "suggested-action");
+  gtk_widget_add_css_class (present, "pill");
+  gtk_widget_set_hexpand (rehearse, TRUE);
+  gtk_widget_add_css_class (rehearse, "pill");
+  gtk_box_append (GTK_BOX (buttons), present);
+  gtk_box_append (GTK_BOX (buttons), rehearse);
+  gtk_box_append (GTK_BOX (content), buttons);
+  g_signal_connect (present, "clicked", G_CALLBACK (present_clicked_cb), pinpoint);
+  g_signal_connect (rehearse, "clicked", G_CALLBACK (rehearse_clicked_cb), pinpoint);
+
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (learn_group),
-                                   "See How Pinpoint Works");
+                                   "Need a Starting Point?");
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (learn_row),
                                  "Introduction, Made with Pinpoint");
   adw_action_row_set_subtitle (
@@ -1763,10 +1775,8 @@ create_setup_view (Pinpoint *pinpoint)
                                   -1);
   adw_action_row_add_suffix (ADW_ACTION_ROW (learn_row), save_introduction);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (learn_group), learn_row);
-  gtk_box_append (GTK_BOX (content), learn_group);
-
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group),
-                                   "Your Presentation");
+                                   "Presentation Options");
   pinpoint->setup_fullscreen = ADW_SWITCH_ROW (adw_switch_row_new ());
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (pinpoint->setup_fullscreen),
                                  "Start Fullscreen");
@@ -1816,18 +1826,7 @@ create_setup_view (Pinpoint *pinpoint)
                     G_CALLBACK (audience_monitor_selected_cb),
                     pinpoint);
   gtk_box_append (GTK_BOX (content), group);
-
-  gtk_box_set_homogeneous (GTK_BOX (buttons), TRUE);
-  gtk_widget_set_hexpand (present, TRUE);
-  gtk_widget_add_css_class (present, "suggested-action");
-  gtk_widget_add_css_class (present, "pill");
-  gtk_widget_set_hexpand (rehearse, TRUE);
-  gtk_widget_add_css_class (rehearse, "pill");
-  gtk_box_append (GTK_BOX (buttons), rehearse);
-  gtk_box_append (GTK_BOX (buttons), present);
-  gtk_box_append (GTK_BOX (content), buttons);
-  g_signal_connect (present, "clicked", G_CALLBACK (present_clicked_cb), pinpoint);
-  g_signal_connect (rehearse, "clicked", G_CALLBACK (rehearse_clicked_cb), pinpoint);
+  gtk_box_append (GTK_BOX (content), learn_group);
   return toolbar;
 }
 
