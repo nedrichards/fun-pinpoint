@@ -5,10 +5,10 @@
     <child>
       <object class="GtkShortcutsSection">
         <property name="section-name">shortcuts</property>
-        <property name="max-height">7</property>
+        <property name="max-height">10</property>
         <child>
           <object class="GtkShortcutsGroup">
-            <property name="title">Setup</property>
+            <property name="title">Keyboard Shortcuts</property>
             <child>
               <object class="GtkShortcutsShortcut">
                 <property name="title">Open a presentation folder</property>
@@ -23,75 +23,56 @@
                 <property name="accelerator">question</property>
               </object>
             </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title">Selected Presentation</property>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Present</property>
+                <property name="title">Present the selected presentation</property>
                 <property name="action-name">win.present-selected</property>
                 <property name="accelerator">&lt;Primary&gt;p</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Rehearse</property>
+                <property name="title">Rehearse the selected presentation</property>
                 <property name="action-name">win.rehearse-selected</property>
                 <property name="accelerator">&lt;Primary&gt;&lt;Shift&gt;r</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Validate</property>
+                <property name="title">Validate the selected presentation</property>
                 <property name="action-name">win.validate-selected</property>
                 <property name="accelerator">&lt;Primary&gt;&lt;Shift&gt;v</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Export to PDF</property>
+                <property name="title">Export the selected presentation to PDF</property>
                 <property name="action-name">win.export-selected</property>
                 <property name="accelerator">&lt;Primary&gt;e</property>
               </object>
             </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title">Presentation Navigation</property>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Next slide</property>
+                <property name="title">Next slide (also Down, Space, Page Down, Forward, and Media Next)</property>
                 <property name="accelerator">Right</property>
-                <property name="subtitle">Also Down, Space, Page Down, Forward, or Media Next</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Previous slide</property>
+                <property name="title">Previous slide (also Up, Backspace, Page Up, Back, and Media Previous)</property>
                 <property name="accelerator">Left</property>
-                <property name="subtitle">Also Up, Backspace, Page Up, Back, or Media Previous</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">First slide</property>
+                <property name="title">First slide (also H)</property>
                 <property name="accelerator">Home</property>
-                <property name="subtitle">Also H</property>
               </object>
             </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title">While Presenting</property>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Toggle fullscreen</property>
+                <property name="title">Toggle fullscreen (also F)</property>
                 <property name="accelerator">F11</property>
-                <property name="subtitle">Also F</property>
               </object>
             </child>
             <child>
@@ -120,16 +101,10 @@
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Quit Pinpoint</property>
+                <property name="title">Quit Pinpoint (also Q)</property>
                 <property name="accelerator">Escape</property>
-                <property name="subtitle">Also Q</property>
               </object>
             </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title">Speaker View</property>
             <child>
               <object class="GtkShortcutsShortcut">
                 <property name="title">Swap audience and speaker displays</property>
