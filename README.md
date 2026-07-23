@@ -193,6 +193,8 @@ save button to make an editable copy with all of its assets.
 
 - Right, Down, Space, Page Down, or primary click: next slide
 - Left, Up, Backspace, Page Up, or secondary click: previous slide
+- One-finger touchscreen swipe or two-finger touchpad swipe: left for next,
+  right for previous
 - Forward/back or media next/previous: navigate when delivered to the app
 - F or F11: fullscreen
 - F1: speaker view

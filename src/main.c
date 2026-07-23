@@ -19,6 +19,7 @@
 #include <glib-unix.h>
 #include <gtk/gtk.h>
 #include <gst/gst.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -27,6 +28,8 @@
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
 #define OPEN_URI_INTERFACE "org.freedesktop.portal.OpenURI"
 #define DOCUMENTATION_BASE_URI "https://github.com/nedrichards/fun-pinpoint/blob/main/docs/"
+#define SWIPE_MIN_DISTANCE 96.0
+#define SWIPE_AXIS_BIAS 1.5
 
 typedef struct
 {
@@ -57,6 +60,9 @@ typedef struct
   char *monitor_revision;
   guint hide_cursor_id;
   guint hide_end_presentation_id;
+  double touchpad_swipe_x;
+  double touchpad_swipe_y;
+  gboolean touchpad_swipe_active;
   guint sigint_id;
   guint sigterm_id;
   guint inhibit_cookie;
@@ -2536,6 +2542,106 @@ key_pressed_cb (GtkEventControllerKey *controller,
 }
 
 static void
+handle_horizontal_swipe (Pinpoint *pinpoint,
+                         double    offset_x,
+                         double    offset_y)
+{
+  if (fabs (offset_x) < SWIPE_MIN_DISTANCE ||
+      fabs (offset_x) < fabs (offset_y) * SWIPE_AXIS_BIAS)
+    return;
+
+  pp_control_activate (pinpoint->control,
+                       offset_x < 0
+                         ? PP_CONTROL_ACTION_NEXT
+                         : PP_CONTROL_ACTION_PREVIOUS);
+}
+
+static void
+touch_drag_begin_cb (GtkGestureDrag *gesture,
+                     double          start_x,
+                     double          start_y,
+                     gpointer        user_data)
+{
+  GdkDevice *device = gtk_gesture_get_device (GTK_GESTURE (gesture));
+
+  (void) start_x;
+  (void) start_y;
+  (void) user_data;
+  if (device == NULL || gdk_device_get_source (device) != GDK_SOURCE_TOUCHSCREEN)
+    {
+      gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_DENIED);
+      return;
+    }
+  gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
+static void
+touch_drag_end_cb (GtkGestureDrag *gesture,
+                   double          offset_x,
+                   double          offset_y,
+                   gpointer        user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  GdkDevice *device = gtk_gesture_get_device (GTK_GESTURE (gesture));
+
+  if (device != NULL && gdk_device_get_source (device) == GDK_SOURCE_TOUCHSCREEN)
+    handle_horizontal_swipe (pinpoint, offset_x, offset_y);
+}
+
+static gboolean
+touchpad_event_cb (GtkEventControllerLegacy *controller,
+                   GdkEvent                 *event,
+                   gpointer                  user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  GdkTouchpadGesturePhase phase;
+  double delta_x;
+  double delta_y;
+
+  (void) controller;
+  if (gdk_event_get_event_type (event) != GDK_TOUCHPAD_SWIPE)
+    return GDK_EVENT_PROPAGATE;
+  if (gdk_touchpad_event_get_n_fingers (event) != 2)
+    {
+      pinpoint->touchpad_swipe_active = FALSE;
+      return GDK_EVENT_PROPAGATE;
+    }
+
+  phase = gdk_touchpad_event_get_gesture_phase (event);
+  switch (phase)
+    {
+    case GDK_TOUCHPAD_GESTURE_PHASE_BEGIN:
+      pinpoint->touchpad_swipe_x = 0;
+      pinpoint->touchpad_swipe_y = 0;
+      pinpoint->touchpad_swipe_active = TRUE;
+      return GDK_EVENT_STOP;
+
+    case GDK_TOUCHPAD_GESTURE_PHASE_UPDATE:
+      if (!pinpoint->touchpad_swipe_active)
+        return GDK_EVENT_PROPAGATE;
+      gdk_touchpad_event_get_deltas (event, &delta_x, &delta_y);
+      pinpoint->touchpad_swipe_x += delta_x;
+      pinpoint->touchpad_swipe_y += delta_y;
+      return GDK_EVENT_STOP;
+
+    case GDK_TOUCHPAD_GESTURE_PHASE_END:
+      if (pinpoint->touchpad_swipe_active)
+        handle_horizontal_swipe (pinpoint,
+                                 pinpoint->touchpad_swipe_x,
+                                 pinpoint->touchpad_swipe_y);
+      pinpoint->touchpad_swipe_active = FALSE;
+      return GDK_EVENT_STOP;
+
+    case GDK_TOUCHPAD_GESTURE_PHASE_CANCEL:
+      pinpoint->touchpad_swipe_active = FALSE;
+      return GDK_EVENT_STOP;
+
+    default:
+      return GDK_EVENT_PROPAGATE;
+    }
+}
+
+static void
 mouse_pressed_cb (GtkGestureClick *gesture,
                   int              n_press,
                   double           x,
@@ -2687,7 +2793,9 @@ activate_cb (GtkApplication *application,
   GtkEventController *keys;
   GtkEventController *motion;
   GtkEventController *command_keys;
+  GtkEventController *touchpad;
   GtkGesture *click;
+  GtkGesture *touch_drag;
 
   if (pinpoint->window != NULL)
     {
@@ -2791,7 +2899,27 @@ activate_cb (GtkApplication *application,
   click = gtk_gesture_click_new ();
   gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (click), 0);
   g_signal_connect (click, "pressed", G_CALLBACK (mouse_pressed_cb), pinpoint);
+
+  touch_drag = gtk_gesture_drag_new ();
+  gtk_gesture_group (click, touch_drag);
+  g_signal_connect (touch_drag,
+                    "drag-begin",
+                    G_CALLBACK (touch_drag_begin_cb),
+                    pinpoint);
+  g_signal_connect (touch_drag,
+                    "drag-end",
+                    G_CALLBACK (touch_drag_end_cb),
+                    pinpoint);
   gtk_widget_add_controller (GTK_WIDGET (pinpoint->stage), GTK_EVENT_CONTROLLER (click));
+  gtk_widget_add_controller (GTK_WIDGET (pinpoint->stage),
+                             GTK_EVENT_CONTROLLER (touch_drag));
+
+  touchpad = gtk_event_controller_legacy_new ();
+  g_signal_connect (touchpad,
+                    "event",
+                    G_CALLBACK (touchpad_event_cb),
+                    pinpoint);
+  gtk_widget_add_controller (GTK_WIDGET (pinpoint->stage), touchpad);
 
   motion = gtk_event_controller_motion_new ();
   g_signal_connect (motion, "motion", G_CALLBACK (motion_cb), pinpoint);
