@@ -147,6 +147,7 @@ struct _PpStage
   guint camera_response_subscription;
   char *camera_request_path;
   char *camera_device;
+  gboolean camera_enabled;
   gboolean camera_request_pending;
   gboolean camera_request_attempted;
   gboolean renderer_reported;
@@ -1541,7 +1542,7 @@ request_camera_idle_cb (gpointer user_data)
   slide = self->presentation != NULL
     ? pp_presentation_get_slide (self->presentation, self->current_slide)
     : NULL;
-  if (!self->media_enabled ||
+  if (!self->media_enabled || !self->camera_enabled ||
       slide == NULL ||
       slide->background_type != PP_BACKGROUND_CAMERA)
     {
@@ -1787,7 +1788,8 @@ snapshot_background (PpStage              *self,
       gtk_snapshot_append_color (snapshot, &background, &bounds);
     }
   else if ((slide->background_type == PP_BACKGROUND_VIDEO ||
-            slide->background_type == PP_BACKGROUND_CAMERA) &&
+            (slide->background_type == PP_BACKGROUND_CAMERA &&
+             self->camera_enabled)) &&
            self->media_enabled)
     {
       PpMedia *media = slide->background_type == PP_BACKGROUND_CAMERA
@@ -2408,16 +2410,8 @@ pp_stage_size_allocate (GtkWidget *widget,
 }
 
 static void
-pp_stage_dispose (GObject *object)
+cancel_camera_request (PpStage *self)
 {
-  PpStage *self = PP_STAGE (object);
-
-  if (self->tick_id != 0)
-    {
-      gtk_widget_remove_tick_callback (GTK_WIDGET (self), self->tick_id);
-      self->tick_id = 0;
-    }
-  clear_page_curl (self);
   if (self->camera_idle_id != 0)
     {
       g_source_remove (self->camera_idle_id);
@@ -2442,6 +2436,22 @@ pp_stage_dispose (GObject *object)
                                              self->camera_response_subscription);
       self->camera_response_subscription = 0;
     }
+  self->camera_request_pending = FALSE;
+  g_clear_pointer (&self->camera_request_path, g_free);
+}
+
+static void
+pp_stage_dispose (GObject *object)
+{
+  PpStage *self = PP_STAGE (object);
+
+  if (self->tick_id != 0)
+    {
+      gtk_widget_remove_tick_callback (GTK_WIDGET (self), self->tick_id);
+      self->tick_id = 0;
+    }
+  clear_page_curl (self);
+  cancel_camera_request (self);
   disable_media_offload (self);
   g_clear_pointer (&self->presentation, pp_presentation_free);
   if (self->assets != NULL)
@@ -2547,6 +2557,7 @@ pp_stage_init (PpStage *self)
   gtk_widget_set_visible (self->media_offload, FALSE);
   gtk_widget_set_parent (self->media_offload, GTK_WIDGET (self));
   self->media_enabled = TRUE;
+  self->camera_enabled = TRUE;
   self->audio_enabled = TRUE;
   self->accessible_context = g_strdup ("Presentation slide");
   gtk_widget_set_focusable (GTK_WIDGET (self), TRUE);
@@ -2836,6 +2847,18 @@ pp_stage_set_camera_device (PpStage    *self,
   g_return_if_fail (PP_IS_STAGE (self));
   g_free (self->camera_device);
   self->camera_device = g_strdup (device);
+}
+
+void
+pp_stage_set_camera_enabled (PpStage  *self,
+                             gboolean  enabled)
+{
+  g_return_if_fail (PP_IS_STAGE (self));
+
+  self->camera_enabled = !!enabled;
+  if (!self->camera_enabled)
+    cancel_camera_request (self);
+  gtk_widget_queue_draw (GTK_WIDGET (self));
 }
 
 void

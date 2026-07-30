@@ -32,6 +32,8 @@ pinpoint_core_sources = files(
   'pp-page-curl.h',
   'pp-render.c',
   'pp-render.h',
+  'pp-source.c',
+  'pp-source.h',
 )
 pinpoint_core_sources += pinpoint_resources
 
@@ -64,7 +66,18 @@ pinpoint_ui_dep = declare_dependency(
 pinpoint_exe = executable(
   'pinpoint',
   'main.c',
-  dependencies: pinpoint_ui_dep,
+  dependencies: [pinpoint_ui_dep, gmodule_dep],
   include_directories: include_directories('..'),
   install: true,
 )
+
+if gtksourceview_dep.found()
+  shared_module(
+    'pinpoint-editor',
+    'pp-editor.c',
+    dependencies: [pinpoint_ui_dep, gtksourceview_dep],
+    include_directories: include_directories('..'),
+    install: true,
+    install_dir: get_option('libdir') / 'pinpoint',
+  )
+endif

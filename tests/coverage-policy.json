@@ -40,7 +40,12 @@
       "uncovered_lines": 6
     },
     "src/main.c": {
-      "uncovered_lines": 694
+      "uncovered_lines": 997
+    },
+    "src/pp-editor.c": {
+      "uncovered_branches": 237,
+      "uncovered_functions": 29,
+      "uncovered_lines": 344
     },
     "src/pp-control.c": {
       "uncovered_branches": 43,
@@ -59,6 +64,11 @@
       "uncovered_branches": 7,
       "uncovered_functions": 0,
       "uncovered_lines": 0
+    },
+    "src/pp-mpris.c": {
+      "uncovered_branches": 42,
+      "uncovered_functions": 2,
+      "uncovered_lines": 28
     },
     "src/pp-page-curl-view.c": {
       "uncovered_branches": 38,
@@ -81,9 +91,9 @@
       "uncovered_lines": 0
     },
     "src/pp-presentation.c": {
-      "uncovered_branches": 158,
-      "uncovered_functions": 3,
-      "uncovered_lines": 62
+      "uncovered_branches": 166,
+      "uncovered_functions": 4,
+      "uncovered_lines": 68
     },
     "src/pp-render.c": {
       "uncovered_branches": 22,
@@ -94,7 +104,12 @@
       "uncovered_lines": 93
     },
     "src/pp-stage.c": {
-      "uncovered_lines": 295
+      "uncovered_lines": 301
+    },
+    "src/pp-source.c": {
+      "uncovered_branches": 93,
+      "uncovered_functions": 2,
+      "uncovered_lines": 37
     },
     "src/pp-transition.c": {
       "uncovered_branches": 27,

@@ -46,6 +46,7 @@ export G_DEBUG=${G_DEBUG:-fatal-criticals,gc-friendly}
 export G_SLICE=${G_SLICE:-always-malloc}
 
 "$build_dir/tests/test-parser" "$root/tests/fixtures/compatibility.pin"
+"$build_dir/tests/test-source"
 "$build_dir/tests/test-asset-monitor"
 "$build_dir/tests/test-display-selection"
 "$build_dir/tests/test-control"
@@ -79,4 +80,5 @@ GDK_SCALE=2 "$build_dir/tests/test-pixels" \
 "$build_dir/tests/test-application" \
   "$build_dir/src/pinpoint" \
   "$root/tests/fixtures/multi-monitor.pin" \
-  "$root/tests/fixtures/media-pipeline.pin"
+  "$root/tests/fixtures/media-pipeline.pin" \
+  "$root/tests/fixtures/legacy-transition.pin"

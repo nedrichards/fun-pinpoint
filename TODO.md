@@ -47,13 +47,6 @@ belongs here.
   RAPL captures were made on wall power. Only then generalize renderer policy
   or consider persistent mapped buffers or deeper resource sharing. See
   `docs/performance.md` for the commands and results.
-- [ ] Explore an optional GTK-native composition environment after the external
-  editor integration is established. Keep `.pin` as the portable plain-text
-  source format and external editors fully supported, while considering a
-  separate GtkSourceView-based experience inspired by GNOME Text Editor and
-  Builder: diagnostics, completion for settings and assets, slide navigation,
-  and a live quality-accurate preview. Keep its dependencies and runtime cost
-  out of the lean presentation path when the editor is not installed or used.
 - [ ] Contribute the Pinpoint language definition to GtkSourceView so Flatpak
   editors receive it from their runtime. Native packages install it directly;
   until the upstream definition reaches the GNOME runtime, sandboxed GNOME Text
@@ -61,6 +54,14 @@ belongs here.
   cannot modify another application's `/app`.
 
 ## Completed work
+
+- [x] Add an optional GTK-native composition mode without turning Pinpoint into
+  a general IDE. A runtime-loaded GtkSourceView module provides one-deck source
+  editing, slide navigation, diagnostics, settings/assets completion, manual
+  atomic saves, external-change handling, and a theme-aware live `PpStage`
+  preview. Presentation startup does not link GtkSourceView. Present and
+  rehearse use in-memory source; returned rehearsal timings become one
+  undoable, unsaved, source-preserving edit rather than rewriting the deck.
 
 - [x] Replace the inherited Pinpoint 0.1.8 AppStream screenshot before a
   supported release. Repository-hosted captures now show the GTK 4 launch,

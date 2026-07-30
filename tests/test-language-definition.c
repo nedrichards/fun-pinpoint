@@ -53,24 +53,53 @@ assert_no_class_at (GtkSourceBuffer *buffer,
                                                             context_class));
 }
 
+static void
+assert_scheme_style (GtkSourceStyleSchemeManager *manager,
+                     const char                  *scheme_id,
+                     const char                  *style_id,
+                     const GdkRGBA                *expected_foreground)
+{
+  GtkSourceStyleScheme *scheme;
+  GtkSourceStyle *style;
+  g_autoptr (GtkTextTag) tag = NULL;
+  GdkRGBA *foreground = NULL;
+
+  scheme = gtk_source_style_scheme_manager_get_scheme (manager, scheme_id);
+  g_assert_nonnull (scheme);
+  style = gtk_source_style_scheme_get_style (scheme, style_id);
+  g_assert_nonnull (style);
+  tag = gtk_text_tag_new (NULL);
+  gtk_source_style_apply (style, tag);
+  g_object_get (tag, "foreground-rgba", &foreground, NULL);
+  g_assert_nonnull (foreground);
+  g_assert_cmpfloat_with_epsilon (foreground->red, expected_foreground->red, 0.001);
+  g_assert_cmpfloat_with_epsilon (foreground->green, expected_foreground->green, 0.001);
+  g_assert_cmpfloat_with_epsilon (foreground->blue, expected_foreground->blue, 0.001);
+  gdk_rgba_free (foreground);
+}
+
 int
 main (int   argc,
       char *argv[])
 {
   g_autoptr (GtkSourceLanguageManager) manager = NULL;
+  g_autoptr (GtkSourceStyleSchemeManager) style_manager = NULL;
   g_autoptr (GtkSourceBuffer) buffer = NULL;
   g_autofree char *language_directory = NULL;
+  g_autofree char *style_directory = NULL;
   g_autofree char *text = NULL;
   g_autoptr (GError) error = NULL;
   const char *const *default_paths;
+  const char *const *default_style_paths;
   g_auto (GStrv) search_paths = NULL;
+  g_auto (GStrv) style_search_paths = NULL;
   GtkSourceLanguage *language;
   GtkSourceLanguage *guessed;
   GtkTextIter start;
   GtkTextIter end;
   guint n_paths;
 
-  g_assert_cmpint (argc, ==, 3);
+  g_assert_cmpint (argc, ==, 4);
   gtk_source_init ();
 
   manager = gtk_source_language_manager_new ();
@@ -85,6 +114,19 @@ main (int   argc,
     search_paths[i + 1] = g_strdup (default_paths[i]);
   gtk_source_language_manager_set_search_path (manager,
                                                 (const char *const *) search_paths);
+
+  style_manager = gtk_source_style_scheme_manager_new ();
+  default_style_paths = gtk_source_style_scheme_manager_get_search_path (style_manager);
+  n_paths = 0;
+  while (default_style_paths[n_paths] != NULL)
+    n_paths++;
+  style_search_paths = g_new0 (char *, n_paths + 2);
+  style_directory = g_path_get_dirname (argv[3]);
+  style_search_paths[0] = g_strdup (style_directory);
+  for (guint i = 0; i < n_paths; i++)
+    style_search_paths[i + 1] = g_strdup (default_style_paths[i]);
+  gtk_source_style_scheme_manager_set_search_path (style_manager,
+                                                    (const char *const *) style_search_paths);
 
   language = gtk_source_language_manager_get_language (manager, "pinpoint");
   g_assert_nonnull (language);
@@ -123,7 +165,21 @@ main (int   argc,
   assert_class_at (buffer, text, "\\#This", "pinpoint-escaped-character");
   assert_class_at (buffer, text, "\\#This", "pinpoint-audience-text");
 
+  assert_scheme_style (style_manager, "Pinpoint", "pinpoint:separator",
+                       &(GdkRGBA) { 0.110, 0.443, 0.847, 1.0 });
+  assert_scheme_style (style_manager, "Pinpoint", "pinpoint:setting",
+                       &(GdkRGBA) { 0.776, 0.275, 0.0, 1.0 });
+  assert_scheme_style (style_manager, "Pinpoint", "pinpoint:command",
+                       &(GdkRGBA) { 0.110, 0.443, 0.847, 1.0 });
+  assert_scheme_style (style_manager, "Pinpoint-dark", "pinpoint:separator",
+                       &(GdkRGBA) { 0.384, 0.627, 0.918, 1.0 });
+  assert_scheme_style (style_manager, "Pinpoint-dark", "pinpoint:setting",
+                       &(GdkRGBA) { 1.0, 0.639, 0.282, 1.0 });
+  assert_scheme_style (style_manager, "Pinpoint-dark", "pinpoint:command",
+                       &(GdkRGBA) { 0.384, 0.627, 0.918, 1.0 });
+
   g_clear_object (&buffer);
+  g_clear_object (&style_manager);
   g_clear_object (&manager);
   gtk_source_finalize ();
   return 0;

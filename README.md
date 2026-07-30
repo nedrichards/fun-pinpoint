@@ -137,6 +137,14 @@ presentation to PDF, then open the PDF or show it in Files. It also provides
 application, current-implementation, original-project, copyright, and licence
 information.
 
+Choose **New Presentation** or **Edit** beside a selected deck to open the
+optional composition mode. It keeps the `.pin` source central: a slide outline
+and the real Pinpoint renderer follow the cursor while diagnostics and
+completion help with settings and assets. The editor follows the desktop's
+light or dark appearance. Its embedded preview mutes audio and does not run
+commands or cameras; **Present** and **Rehearse** deliberately enter the full
+presentation path. See the [composition-mode guide](docs/composition-editor.md).
+
 PDF export includes a focused setup step for A4 or US Letter paper, landscape
 or portrait orientation, separate speaker-note pages, and whether comment
 lines should become notes. The same output controls are available to scripts:
@@ -190,6 +198,10 @@ The historical `introduction.pin` is bundled as a worked example: choose
 save button to make an editable copy with all of its assets.
 
 ## Controls
+
+Composition mode uses Ctrl+S to save, Ctrl+Shift+S to save as, Ctrl+Space for
+Pinpoint settings and asset completion, Ctrl+Enter to present, Ctrl+Shift+R to
+rehearse, and Alt+Up/Down to move between slides.
 
 - Right, Down, Space, Page Down, or primary click: next slide
 - Left, Up, Backspace, Page Up, or secondary click: previous slide

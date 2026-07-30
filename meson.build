@@ -26,6 +26,7 @@ gtk_req = '>= 4.22'
 glib_dep = dependency('glib-2.0', version: glib_req)
 gio_dep = dependency('gio-2.0', version: glib_req)
 gio_unix_dep = dependency('gio-unix-2.0', version: glib_req)
+gmodule_dep = dependency('gmodule-2.0', version: glib_req)
 gtk_dep = dependency('gtk4', version: gtk_req)
 libadwaita_dep = dependency('libadwaita-1', version: '>= 1.8')
 pango_dep = dependency('pango', version: '>= 1.50')
@@ -41,6 +42,9 @@ gstreamer_pbutils_dep = dependency('gstreamer-pbutils-1.0', version: '>= 1.22')
 gstreamer_video_dep = dependency('gstreamer-video-1.0', version: '>= 1.22')
 json_glib_dep = dependency('json-glib-1.0', version: '>= 1.8')
 epoxy_dep = dependency('epoxy', version: '>= 1.5')
+gtksourceview_dep = dependency('gtksourceview-5',
+                               version: '>= 5.20',
+                               required: get_option('editor'))
 math_dep = cc.find_library('m', required: true)
 
 config_h = configuration_data()
@@ -49,6 +53,8 @@ config_h.set_quoted('LOCALEDIR', get_option('prefix') / get_option('localedir'))
 config_h.set_quoted('PINPOINT_APPLICATION_ID', pinpoint_id)
 config_h.set_quoted('PINPOINT_TAGLINE', pinpoint_tagline)
 config_h.set_quoted('PINPOINT_VERSION', pinpoint_version)
+config_h.set_quoted('PINPOINT_EDITOR_MODULE_DIR',
+                    get_option('prefix') / get_option('libdir') / 'pinpoint')
 configure_file(output: 'config.h', configuration: config_h)
 
 add_project_arguments(
@@ -69,4 +75,5 @@ summary({
   'Version': pinpoint_version,
   'Application ID': pinpoint_id,
   'Prefix': get_option('prefix'),
+  'Composition editor': gtksourceview_dep.found(),
 }, section: 'Pinpoint')

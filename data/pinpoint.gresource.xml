@@ -3,6 +3,13 @@
   <gresource prefix="/com/nedrichards/pinpoint">
     <file preprocess="xml-stripblanks">gtk/shortcuts-window.ui</file>
   </gresource>
+  <gresource prefix="/com/nedrichards/pinpoint/gtksourceview-5/language-specs">
+    <file alias="pinpoint.lang">pinpoint.lang</file>
+  </gresource>
+  <gresource prefix="/com/nedrichards/pinpoint/gtksourceview-5/styles">
+    <file alias="pinpoint-style.xml">pinpoint-style.xml</file>
+    <file alias="pinpoint-dark-style.xml">pinpoint-dark-style.xml</file>
+  </gresource>
   <gresource prefix="/com/nedrichards/pinpoint/introduction">
     <file alias="introduction.pin">introduction/introduction.pin</file>
     <file alias="bg.jpg">introduction/bg.jpg</file>

@@ -4,3 +4,10 @@ option(
   value: false,
   description: 'Build non-installed remote-control protocol prototypes',
 )
+
+option(
+  'editor',
+  type: 'feature',
+  value: 'auto',
+  description: 'Build the optional GtkSourceView composition mode',
+)

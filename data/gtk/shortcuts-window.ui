@@ -11,9 +11,40 @@
             <property name="title">Keyboard Shortcuts</property>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Open a presentation folder</property>
+                <property name="title">Present from a folder</property>
                 <property name="action-name">win.open-presentation</property>
                 <property name="accelerator">&lt;Primary&gt;o</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Create a presentation</property>
+                <property name="action-name">win.new-presentation</property>
+                <property name="accelerator">&lt;Primary&gt;n</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Save in composition mode</property>
+                <property name="accelerator">&lt;Primary&gt;s</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Complete a setting or asset</property>
+                <property name="accelerator">&lt;Primary&gt;space</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Present from composition mode</property>
+                <property name="accelerator">&lt;Primary&gt;Return</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title">Move between editor areas</property>
+                <property name="accelerator">F6</property>
               </object>
             </child>
             <child>

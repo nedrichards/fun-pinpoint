@@ -7,3 +7,9 @@ leak:Fc
 # This is allocated while GTK initializes its Wayland GL renderer and is rooted
 # in Mesa rather than an application-owned allocation.
 leak:_eglCreateArray
+
+# GIO's process-wide shared D-Bus reader can still be decoding the final bus
+# reply when a short-lived application subprocess exits. The allocation is
+# wholly owned by g_dbus_message_new_from_blob on that shared worker thread;
+# application-owned D-Bus objects remain covered by the leak gate.
+leak:g_dbus_message_new_from_blob

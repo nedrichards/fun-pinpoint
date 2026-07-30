@@ -1,6 +1,7 @@
 #include "config.h"
 
 #include "pp-presentation.h"
+#include "pp-source.h"
 
 #include <gtk/gtk.h>
 #include <stdio.h>
@@ -1073,28 +1074,61 @@ pp_presentation_rehearsal_record (PpPresentation *self,
   slide->new_duration += seconds;
 }
 
+double
+pp_presentation_rehearsal_get_duration (const PpPresentation *self,
+                                        guint                 index)
+{
+  const PpSlide *slide;
+
+  g_return_val_if_fail (self != NULL, 0.0);
+  g_return_val_if_fail (index < self->slides->len, 0.0);
+  slide = g_ptr_array_index (self->slides, index);
+  return slide->new_duration;
+}
+
 gboolean
 pp_presentation_rehearsal_finish (PpPresentation *self,
                                   GError        **error)
 {
-  g_autofree char *serialized = NULL;
+  g_autofree char *current_source = NULL;
+  g_autofree char *etag = NULL;
+  g_autofree char *updated_source = NULL;
+  g_autofree double *durations = NULL;
   gsize length;
 
   g_return_val_if_fail (self != NULL, FALSE);
   g_return_val_if_fail (self->file != NULL, FALSE);
 
-  for (guint i = 0; i < self->slides->len; i++)
+  if (!g_file_load_contents (self->file,
+                             NULL,
+                             &current_source,
+                             &length,
+                             &etag,
+                             error))
+    return FALSE;
+  if (!g_str_equal (current_source, self->source))
     {
-      PpSlide *slide = g_ptr_array_index (self->slides, i);
-      slide->duration = slide->new_duration;
+      g_set_error_literal (error,
+                           PP_PRESENTATION_ERROR,
+                           PP_PRESENTATION_ERROR_IO,
+                           "The presentation changed on disk during rehearsal");
+      return FALSE;
     }
 
-  serialized = pp_presentation_serialize (self);
-  length = strlen (serialized);
+  durations = g_new (double, self->slides->len);
+  for (guint i = 0; i < self->slides->len; i++)
+    durations[i] = ((PpSlide *) g_ptr_array_index (self->slides, i))->new_duration;
+  updated_source = pp_source_apply_durations (self->source,
+                                              durations,
+                                              self->slides->len,
+                                              error);
+  if (updated_source == NULL)
+    return FALSE;
+  length = strlen (updated_source);
   if (!g_file_replace_contents (self->file,
-                                serialized,
+                                updated_source,
                                 length,
-                                NULL,
+                                etag,
                                 FALSE,
                                 G_FILE_CREATE_REPLACE_DESTINATION,
                                 NULL,
@@ -1102,7 +1136,12 @@ pp_presentation_rehearsal_finish (PpPresentation *self,
                                 error))
     return FALSE;
 
+  for (guint i = 0; i < self->slides->len; i++)
+    {
+      PpSlide *slide = g_ptr_array_index (self->slides, i);
+      slide->duration = slide->new_duration;
+    }
   g_free (self->source);
-  self->source = g_steal_pointer (&serialized);
+  self->source = g_steal_pointer (&updated_source);
   return TRUE;
 }

@@ -26,6 +26,7 @@
       "buildsystem": "meson",
       "config-opts": [
         "--prefix=/app",
+        "-Deditor=enabled",
         "-Dbuildtype=debugoptimized"
       ],
       "sources": [

@@ -181,6 +181,9 @@ struct _PpSpeaker
   GtkToggleButton *autoadvance_button;
   GTimer *timer;
   PpPresentation *rehearsal_presentation;
+  PpSpeakerRehearsalFinishedFunc rehearsal_finished;
+  gpointer rehearsal_finished_data;
+  GDestroyNotify rehearsal_finished_destroy;
   double slide_started;
   guint timed_slide;
   guint tick_id;
@@ -341,6 +344,16 @@ stop_timer_updates (PpSpeaker *self)
 }
 
 static void
+clear_rehearsal_callback (PpSpeaker *self)
+{
+  if (self->rehearsal_finished_destroy != NULL)
+    self->rehearsal_finished_destroy (self->rehearsal_finished_data);
+  self->rehearsal_finished = NULL;
+  self->rehearsal_finished_data = NULL;
+  self->rehearsal_finished_destroy = NULL;
+}
+
+static void
 audience_slide_changed_cb (PpStage *stage,
                            guint    index,
                            gpointer user_data)
@@ -355,6 +368,7 @@ audience_slide_changed_cb (PpStage *stage,
       g_warning ("Rehearsal cancelled because the presentation was reloaded");
       self->rehearsing = FALSE;
       g_clear_pointer (&self->rehearsal_presentation, pp_presentation_free);
+      clear_rehearsal_callback (self);
       gtk_button_set_label (self->rehearse_button, "Rehearse");
     }
   else if (self->rehearsing && self->running)
@@ -391,7 +405,20 @@ presentation_ended_cb (PpStage *stage,
                                     self->timed_slide,
                                     MAX (now - self->slide_started, 0.0));
   self->rehearsing = FALSE;
-  if (!pp_presentation_rehearsal_finish (self->rehearsal_presentation, &error))
+  if (self->rehearsal_finished != NULL)
+    {
+      guint count = pp_presentation_get_n_slides (self->rehearsal_presentation);
+      g_autofree double *durations = g_new (double, count);
+
+      for (guint i = 0; i < count; i++)
+        durations[i] = pp_presentation_rehearsal_get_duration (
+          self->rehearsal_presentation, i);
+      self->rehearsal_finished (durations,
+                                count,
+                                self->rehearsal_finished_data);
+      clear_rehearsal_callback (self);
+    }
+  else if (!pp_presentation_rehearsal_finish (self->rehearsal_presentation, &error))
     g_warning ("Unable to save rehearsal timings: %s", error->message);
   else
     g_print ("Saved rehearsal timings\n");
@@ -406,6 +433,8 @@ restart_timer (PpSpeaker *self,
   const PpPresentation *presentation = pp_stage_get_presentation (self->audience_stage);
 
   self->rehearsing = FALSE;
+  if (!rehearse)
+    clear_rehearsal_callback (self);
   g_clear_pointer (&self->rehearsal_presentation, pp_presentation_free);
   pp_stage_first (self->audience_stage);
   g_timer_start (self->timer);
@@ -791,6 +820,7 @@ pp_speaker_free (PpSpeaker *self)
   g_clear_object (&self->audience_stage);
   g_clear_object (&self->control);
   g_clear_pointer (&self->rehearsal_presentation, pp_presentation_free);
+  clear_rehearsal_callback (self);
   g_timer_destroy (self->timer);
   g_free (self);
 }
@@ -841,7 +871,44 @@ void
 pp_speaker_start_rehearsal (PpSpeaker *self)
 {
   g_return_if_fail (self != NULL);
+  clear_rehearsal_callback (self);
   restart_timer (self, TRUE);
+}
+
+void
+pp_speaker_start_rehearsal_for_editor (
+  PpSpeaker                       *self,
+  PpSpeakerRehearsalFinishedFunc   callback,
+  gpointer                         user_data,
+  GDestroyNotify                   destroy)
+{
+  g_return_if_fail (self != NULL);
+  g_return_if_fail (callback != NULL);
+
+  clear_rehearsal_callback (self);
+  self->rehearsal_finished = callback;
+  self->rehearsal_finished_data = user_data;
+  self->rehearsal_finished_destroy = destroy;
+  restart_timer (self, TRUE);
+}
+
+void
+pp_speaker_cancel_rehearsal (PpSpeaker *self)
+{
+  g_return_if_fail (self != NULL);
+
+  if (self->running)
+    g_timer_stop (self->timer);
+  self->running = FALSE;
+  self->paused = FALSE;
+  self->rehearsing = FALSE;
+  stop_timer_updates (self);
+  gtk_toggle_button_set_active (self->autoadvance_button, FALSE);
+  gtk_button_set_label (self->start_button, "Start");
+  gtk_button_set_label (self->pause_button, "Pause");
+  gtk_button_set_label (self->rehearse_button, "Rehearse");
+  g_clear_pointer (&self->rehearsal_presentation, pp_presentation_free);
+  clear_rehearsal_callback (self);
 }
 
 void

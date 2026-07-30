@@ -8,6 +8,9 @@
 G_BEGIN_DECLS
 
 typedef struct _PpSpeaker PpSpeaker;
+typedef void (*PpSpeakerRehearsalFinishedFunc) (const double *durations,
+                                                guint         n_durations,
+                                                gpointer      user_data);
 PpSpeaker *pp_speaker_new (GtkApplication *application,
                            PpStage         *audience_stage,
                            PpControl       *control);
@@ -20,6 +23,12 @@ void       pp_speaker_set_fullscreen (PpSpeaker *self,
                                       gboolean   fullscreen,
                                       GdkMonitor *monitor);
 void       pp_speaker_start_rehearsal (PpSpeaker *self);
+void       pp_speaker_start_rehearsal_for_editor (
+             PpSpeaker                       *self,
+             PpSpeakerRehearsalFinishedFunc   callback,
+             gpointer                         user_data,
+             GDestroyNotify                   destroy);
+void       pp_speaker_cancel_rehearsal (PpSpeaker *self);
 void       pp_speaker_invalidate_asset (PpSpeaker *self,
                                         GFile     *file);
 

@@ -414,7 +414,12 @@ test_native_transition_settings (void)
 static void
 test_rehearsal_finish (void)
 {
-  const char *source = "[duration=1]\n--\nFirst\n--\nSecond\n";
+  const char *source =
+    "[duration=1] # preserve this comment\n"
+    "--  [top] [duration=9]  \n"
+    "First\n"
+    "-- [no-markup]\n"
+    "Second\n";
   g_autoptr (GFileIOStream) stream = NULL;
   g_autoptr (GFile) file = NULL;
   g_autoptr (PpPresentation) presentation = NULL;
@@ -451,6 +456,56 @@ test_rehearsal_finish (void)
     pp_presentation_get_slide (saved, 0)->duration, 2.5, 0.0001);
   g_assert_cmpfloat_with_epsilon (
     pp_presentation_get_slide (saved, 1)->duration, 4.75, 0.0001);
+  {
+    g_autofree char *contents = NULL;
+
+    g_assert_true (g_file_load_contents (file, NULL, &contents, NULL, NULL, &error));
+    g_assert_no_error (error);
+    g_assert_cmpstr (contents, ==,
+                     "[duration=1] # preserve this comment\n"
+                     "--  [top] [duration=2.5]  \n"
+                     "First\n"
+                     "-- [no-markup] [duration=4.75]\n"
+                     "Second\n");
+  }
+  g_assert_true (g_file_delete (file, NULL, &error));
+  g_assert_no_error (error);
+}
+
+static void
+test_rehearsal_finish_rejects_external_change (void)
+{
+  const char *source = "--\nFirst\n";
+  const char *external = "--\nChanged elsewhere\n";
+  g_autoptr (GFileIOStream) stream = NULL;
+  g_autoptr (GFile) file = NULL;
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autofree char *contents = NULL;
+
+  file = g_file_new_tmp ("pinpoint-rehearsal-conflict-XXXXXX", &stream, &error);
+  g_assert_no_error (error);
+  g_assert_true (g_io_stream_close (G_IO_STREAM (stream), NULL, &error));
+  g_assert_no_error (error);
+  g_clear_object (&stream);
+  g_assert_true (g_file_replace_contents (file, source, strlen (source),
+                                          NULL, FALSE, G_FILE_CREATE_NONE,
+                                          NULL, NULL, &error));
+  g_assert_no_error (error);
+  presentation = pp_presentation_load (file, FALSE, NULL, &error);
+  g_assert_no_error (error);
+  pp_presentation_rehearsal_reset (presentation);
+  pp_presentation_rehearsal_record (presentation, 0, 3.0);
+  g_assert_true (g_file_replace_contents (file, external, strlen (external),
+                                          NULL, FALSE, G_FILE_CREATE_NONE,
+                                          NULL, NULL, &error));
+  g_assert_no_error (error);
+  g_assert_false (pp_presentation_rehearsal_finish (presentation, &error));
+  g_assert_error (error, PP_PRESENTATION_ERROR, PP_PRESENTATION_ERROR_IO);
+  g_clear_error (&error);
+  g_assert_true (g_file_load_contents (file, NULL, &contents, NULL, NULL, &error));
+  g_assert_no_error (error);
+  g_assert_cmpstr (contents, ==, external);
   g_assert_true (g_file_delete (file, NULL, &error));
   g_assert_no_error (error);
 }
@@ -1819,6 +1874,8 @@ main (int   argc,
   g_test_add_func ("/parser/native-transition-settings",
                    test_native_transition_settings);
   g_test_add_func ("/parser/rehearsal-finish", test_rehearsal_finish);
+  g_test_add_func ("/parser/rehearsal-conflict",
+                   test_rehearsal_finish_rejects_external_change);
   g_test_add_func ("/render/geometry", test_geometry);
   g_test_add_func ("/render/asset-resolution", test_asset_resolution);
   g_test_add_func ("/render/pixel-layout-validation",

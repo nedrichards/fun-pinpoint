@@ -30,7 +30,7 @@
     <style id="defaults" name="Presentation defaults" map-to="def:preprocessor"/>
     <style id="separator" name="Slide separator" map-to="def:heading"/>
     <style id="setting" name="Slide setting" map-to="def:type"/>
-    <style id="audience-text" name="Audience text" map-to="def:string"/>
+    <style id="audience-text" name="Audience text"/>
     <style id="speaker-note" name="Speaker note" map-to="def:comment"/>
     <style id="visual-description" name="Visual description" map-to="def:comment"/>
     <style id="command" name="Command" map-to="def:function"/>

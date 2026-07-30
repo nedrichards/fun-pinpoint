@@ -3,6 +3,7 @@
 #include "pp-asset-monitor.h"
 #include "pp-control.h"
 #include "pp-display-selection.h"
+#include "pp-editor-module.h"
 #include "pp-file-access.h"
 #include "pp-introduction.h"
 #include "pp-mpris.h"
@@ -17,6 +18,7 @@
 #include <gio/gfiledescriptorbased.h>
 #include <gio/gunixfdlist.h>
 #include <glib-unix.h>
+#include <gmodule.h>
 #include <gtk/gtk.h>
 #include <gst/gst.h>
 #include <math.h>
@@ -46,7 +48,7 @@ typedef struct
   AdwSwitchRow *setup_speaker;
   AdwSwitchRow *setup_ignore_comments;
   AdwComboRow *setup_audience_monitor;
-  AdwPreferencesGroup *setup_selected_group;
+  GtkWidget *setup_selected_section;
   AdwActionRow *setup_selected_row;
   AdwBanner *welcome_banner;
   GPtrArray *setup_monitor_choices;
@@ -89,6 +91,13 @@ typedef struct
   GdkMonitor *audience_monitor;
   gboolean updating_monitor_choices;
   GSettings *settings;
+  GModule *editor_module;
+  GtkWidget *editor_widget;
+  PpEditorModuleApplyDurationsFunc editor_apply_durations;
+  PpEditorModuleRequestCloseFunc editor_request_close;
+  gboolean edit_mode;
+  gboolean editor_presentation_active;
+  gboolean editor_rehearsing;
 } Pinpoint;
 
 static void set_fullscreen (Pinpoint *pinpoint,
@@ -105,6 +114,10 @@ static void update_selected_presentation (Pinpoint *pinpoint);
 static void set_selected_actions_enabled (Pinpoint *pinpoint,
                                           gboolean  enabled);
 static void view_bundled_introduction (Pinpoint *pinpoint);
+static gboolean show_editor (Pinpoint *pinpoint,
+                             GFile    *file);
+static void finish_editor_presentation (Pinpoint *pinpoint,
+                                        gboolean  rehearsal_completed);
 
 static void
 clear_source_id (guint *source_id)
@@ -343,6 +356,12 @@ main_window_close_request_cb (GtkWindow *window,
   Pinpoint *pinpoint = user_data;
 
   (void) window;
+  if (pinpoint->editor_widget != NULL && pinpoint->editor_request_close != NULL)
+    {
+      finish_editor_presentation (pinpoint, FALSE);
+      pinpoint->editor_request_close (pinpoint->editor_widget, TRUE);
+      return TRUE;
+    }
   g_application_quit (G_APPLICATION (pinpoint->application));
   return TRUE;
 }
@@ -739,6 +758,193 @@ start_loaded_presentation (Pinpoint *pinpoint)
       pp_speaker_start_rehearsal (pinpoint->speaker);
     }
   gtk_widget_grab_focus (GTK_WIDGET (pinpoint->stage));
+  return TRUE;
+}
+
+static void
+finish_editor_presentation (Pinpoint *pinpoint,
+                            gboolean  rehearsal_completed)
+{
+  if (!pinpoint->editor_presentation_active)
+    return;
+
+  set_fullscreen (pinpoint, FALSE);
+  set_speaker_visible (pinpoint, FALSE);
+  set_presenting (pinpoint, FALSE);
+  if (pinpoint->editor_rehearsing && !rehearsal_completed)
+    pp_speaker_cancel_rehearsal (pinpoint->speaker);
+  pinpoint->editor_presentation_active = FALSE;
+  pinpoint->editor_rehearsing = FALSE;
+  gtk_stack_set_visible_child_name (pinpoint->view_stack, "editor");
+}
+
+static void
+editor_rehearsal_finished_cb (const double *durations,
+                              guint         n_durations,
+                              gpointer      user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  finish_editor_presentation (pinpoint, TRUE);
+  if (pinpoint->editor_widget != NULL &&
+      pinpoint->editor_apply_durations != NULL)
+    pinpoint->editor_apply_durations (pinpoint->editor_widget,
+                                      durations,
+                                      n_durations);
+}
+
+static void
+editor_launch_cb (const char *source,
+                  GFile      *file,
+                  guint       initial_slide,
+                  gboolean    rehearse,
+                  gpointer    user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GError) error = NULL;
+  guint count;
+
+  presentation = pp_presentation_parse (source,
+                                        file,
+                                        pinpoint->ignore_comments,
+                                        &error);
+  if (presentation == NULL)
+    {
+      show_folder_problem (pinpoint,
+                           "Unable to Preview Presentation",
+                           error->message,
+                           FALSE);
+      return;
+    }
+
+  count = pp_presentation_get_n_slides (presentation);
+  g_set_object (&pinpoint->file, file);
+  pp_stage_set_presentation (pinpoint->stage,
+                             g_steal_pointer (&presentation),
+                             MIN (initial_slide, count - 1));
+  set_window_title (pinpoint);
+  pinpoint->editor_presentation_active = TRUE;
+  pinpoint->editor_rehearsing = rehearse;
+  set_presenting (pinpoint, TRUE);
+  if (rehearse)
+    {
+      gtk_stack_set_visible_child_name (pinpoint->view_stack, "editor");
+      set_speaker_visible (pinpoint, TRUE);
+      set_fullscreen (pinpoint, FALSE);
+      pp_speaker_start_rehearsal_for_editor (pinpoint->speaker,
+                                             editor_rehearsal_finished_cb,
+                                             pinpoint,
+                                             NULL);
+      return;
+    }
+
+  gtk_stack_set_visible_child_name (pinpoint->view_stack, "presentation");
+  set_speaker_visible (pinpoint,
+                       adw_switch_row_get_active (pinpoint->setup_speaker));
+  set_fullscreen (pinpoint,
+                  adw_switch_row_get_active (pinpoint->setup_fullscreen));
+  gtk_widget_grab_focus (GTK_WIDGET (pinpoint->stage));
+}
+
+static void
+editor_close_cb (gboolean quit,
+                 gpointer user_data)
+{
+  Pinpoint *pinpoint = user_data;
+  GtkWidget *editor = pinpoint->editor_widget;
+
+  finish_editor_presentation (pinpoint, FALSE);
+  if (quit)
+    {
+      g_application_quit (G_APPLICATION (pinpoint->application));
+      return;
+    }
+  pinpoint->editor_widget = NULL;
+  gtk_stack_set_visible_child_name (pinpoint->view_stack, "setup");
+  if (editor != NULL)
+    gtk_stack_remove (pinpoint->view_stack, editor);
+}
+
+static GModule *
+open_editor_module (void)
+{
+  g_autofree char *executable = g_file_read_link ("/proc/self/exe", NULL);
+  g_autofree char *directory = executable != NULL ? g_path_get_dirname (executable) : NULL;
+  g_autofree char *adjacent = directory != NULL
+    ? g_build_filename (directory, "libpinpoint-editor.so", NULL) : NULL;
+  g_autofree char *installed = g_build_filename (PINPOINT_EDITOR_MODULE_DIR,
+                                                  "libpinpoint-editor.so",
+                                                  NULL);
+  GModule *module = NULL;
+
+  if (adjacent != NULL)
+    module = g_module_open (adjacent, G_MODULE_BIND_LAZY | G_MODULE_BIND_LOCAL);
+  if (module == NULL)
+    module = g_module_open (installed, G_MODULE_BIND_LAZY | G_MODULE_BIND_LOCAL);
+  if (module != NULL)
+    g_module_make_resident (module);
+  return module;
+}
+
+static gboolean
+show_editor (Pinpoint *pinpoint,
+             GFile    *file)
+{
+  PpEditorModuleGetAbiFunc get_abi = NULL;
+  PpEditorModuleCreateFunc create = NULL;
+  PpEditorHost host = {
+    .abi_version = PP_EDITOR_MODULE_ABI,
+    .application = pinpoint->application,
+    .launch = editor_launch_cb,
+    .close = editor_close_cb,
+    .user_data = pinpoint,
+  };
+
+  /* Never replace a live buffer: New/Edit can also arrive via accelerators. */
+  if (pinpoint->editor_widget != NULL)
+    {
+      gtk_stack_set_visible_child (pinpoint->view_stack,
+                                   pinpoint->editor_widget);
+      return TRUE;
+    }
+
+  if (pinpoint->editor_module == NULL)
+    pinpoint->editor_module = open_editor_module ();
+  if (pinpoint->editor_module == NULL ||
+      !g_module_symbol (pinpoint->editor_module,
+                        "pp_editor_module_get_abi",
+                        (gpointer *) &get_abi) ||
+      !g_module_symbol (pinpoint->editor_module,
+                        "pp_editor_module_create",
+                        (gpointer *) &create) ||
+      !g_module_symbol (pinpoint->editor_module,
+                        "pp_editor_module_apply_durations",
+                        (gpointer *) &pinpoint->editor_apply_durations) ||
+      !g_module_symbol (pinpoint->editor_module,
+                        "pp_editor_module_request_close",
+                        (gpointer *) &pinpoint->editor_request_close) ||
+      get_abi () != PP_EDITOR_MODULE_ABI)
+    {
+      show_folder_problem (pinpoint,
+                           "Composition Mode Is Unavailable",
+                           pinpoint->editor_module != NULL
+                             ? "The installed editor module is incompatible with this Pinpoint build."
+                             : "This Pinpoint build does not include the optional GtkSourceView editor module.",
+                           FALSE);
+      return FALSE;
+    }
+
+  pinpoint->editor_widget = create (&host, file);
+  if (pinpoint->editor_widget == NULL)
+    return FALSE;
+  if (!pinpoint->maximized)
+    gtk_window_set_default_size (pinpoint->window, 1200, 760);
+  gtk_stack_add_named (pinpoint->view_stack,
+                       pinpoint->editor_widget,
+                       "editor");
+  gtk_stack_set_visible_child_name (pinpoint->view_stack, "editor");
+  set_window_title (pinpoint);
   return TRUE;
 }
 
@@ -1175,9 +1381,8 @@ use_selected_presentation (Pinpoint *pinpoint)
     {
       g_clear_object (&pinpoint->file);
       set_window_title (pinpoint);
-      if (pinpoint->setup_selected_group != NULL)
-        gtk_widget_set_visible (GTK_WIDGET (pinpoint->setup_selected_group),
-                                FALSE);
+      if (pinpoint->setup_selected_section != NULL)
+        gtk_widget_set_visible (pinpoint->setup_selected_section, FALSE);
       set_selected_actions_enabled (pinpoint, FALSE);
     }
 }
@@ -1193,7 +1398,7 @@ update_selected_presentation (Pinpoint *pinpoint)
   guint videos = 0;
   guint notes = 0;
 
-  if (pinpoint->setup_selected_group == NULL || pinpoint->file == NULL)
+  if (pinpoint->setup_selected_section == NULL || pinpoint->file == NULL)
     return;
 
   basename = g_file_get_basename (pinpoint->file);
@@ -1207,7 +1412,7 @@ update_selected_presentation (Pinpoint *pinpoint)
     {
       adw_action_row_set_subtitle (pinpoint->setup_selected_row,
                                    "Select Validate to see why this deck cannot be opened");
-      gtk_widget_set_visible (GTK_WIDGET (pinpoint->setup_selected_group), TRUE);
+      gtk_widget_set_visible (pinpoint->setup_selected_section, TRUE);
       return;
     }
 
@@ -1242,7 +1447,7 @@ update_selected_presentation (Pinpoint *pinpoint)
   if (notes > 0)
     g_string_append (details, " · speaker notes");
   adw_action_row_set_subtitle (pinpoint->setup_selected_row, details->str);
-  gtk_widget_set_visible (GTK_WIDGET (pinpoint->setup_selected_group), TRUE);
+  gtk_widget_set_visible (pinpoint->setup_selected_section, TRUE);
 }
 
 static void
@@ -1265,6 +1470,7 @@ set_selected_actions_enabled (Pinpoint *pinpoint,
                               gboolean  enabled)
 {
   static const char *actions[] = {
+    "edit-selected",
     "present-selected",
     "rehearse-selected",
     "validate-selected",
@@ -1734,6 +1940,8 @@ introduction_folder_selected_cb (GObject      *source,
                                  gpointer      user_data)
 {
   Pinpoint *pinpoint = user_data;
+  gboolean edit_copy = GPOINTER_TO_INT (
+    g_object_get_data (source, "pinpoint-edit-introduction-copy"));
   g_autoptr (GFile) folder = NULL;
   g_autoptr (GFile) presentation = NULL;
   g_autoptr (GError) error = NULL;
@@ -1769,7 +1977,32 @@ introduction_folder_selected_cb (GObject      *source,
                            FALSE);
       return;
     }
-  show_introduction_saved (pinpoint, presentation);
+  if (edit_copy)
+    show_editor (pinpoint, presentation);
+  else
+    show_introduction_saved (pinpoint, presentation);
+}
+
+static void
+choose_introduction_folder (Pinpoint *pinpoint,
+                            gboolean  edit_copy)
+{
+  g_autoptr (GtkFileDialog) dialog = gtk_file_dialog_new ();
+
+  gtk_file_dialog_set_title (dialog,
+                             edit_copy ? "Open Introduction in Editor"
+                                       : "Save Editable Introduction");
+  gtk_file_dialog_set_accept_label (dialog,
+                                    edit_copy ? "Open Copy in Editor"
+                                              : "Save Copy Here");
+  g_object_set_data (G_OBJECT (dialog),
+                     "pinpoint-edit-introduction-copy",
+                     GINT_TO_POINTER (edit_copy));
+  gtk_file_dialog_select_folder (dialog,
+                                 pinpoint->window,
+                                 NULL,
+                                 introduction_folder_selected_cb,
+                                 pinpoint);
 }
 
 static void
@@ -1777,18 +2010,19 @@ save_introduction_action_cb (GSimpleAction *action,
                              GVariant      *parameter,
                              gpointer       user_data)
 {
-  Pinpoint *pinpoint = user_data;
-  g_autoptr (GtkFileDialog) dialog = gtk_file_dialog_new ();
-
   (void) action;
   (void) parameter;
-  gtk_file_dialog_set_title (dialog, "Save Editable Introduction");
-  gtk_file_dialog_set_accept_label (dialog, "Save Copy Here");
-  gtk_file_dialog_select_folder (dialog,
-                                 pinpoint->window,
-                                 NULL,
-                                 introduction_folder_selected_cb,
-                                 pinpoint);
+  choose_introduction_folder (user_data, FALSE);
+}
+
+static void
+edit_introduction_action_cb (GSimpleAction *action,
+                             GVariant      *parameter,
+                             gpointer       user_data)
+{
+  (void) action;
+  (void) parameter;
+  choose_introduction_folder (user_data, TRUE);
 }
 
 static void
@@ -1814,6 +2048,29 @@ open_presentation_action_cb (GSimpleAction *action,
   (void) action;
   (void) parameter;
   open_presentation_clicked_cb (NULL, user_data);
+}
+
+static void
+new_presentation_action_cb (GSimpleAction *action,
+                            GVariant      *parameter,
+                            gpointer       user_data)
+{
+  (void) action;
+  (void) parameter;
+  show_editor (user_data, NULL);
+}
+
+static void
+edit_selected_action_cb (GSimpleAction *action,
+                         GVariant      *parameter,
+                         gpointer       user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  (void) action;
+  (void) parameter;
+  if (pinpoint->file != NULL)
+    show_editor (pinpoint, pinpoint->file);
 }
 
 static void
@@ -1970,9 +2227,12 @@ create_setup_view (Pinpoint *pinpoint)
   static const GActionEntry actions[] = {
     { .name = "view-introduction", .activate = view_introduction_action_cb },
     { .name = "save-introduction", .activate = save_introduction_action_cb },
+    { .name = "edit-introduction", .activate = edit_introduction_action_cb },
     { .name = "open-presentation", .activate = open_presentation_action_cb },
+    { .name = "new-presentation", .activate = new_presentation_action_cb },
     { .name = "export-pdf", .activate = export_pdf_action_cb },
     { .name = "present-selected", .activate = present_selected_action_cb },
+    { .name = "edit-selected", .activate = edit_selected_action_cb },
     { .name = "rehearse-selected", .activate = rehearse_selected_action_cb },
     { .name = "validate-selected", .activate = validate_selected_action_cb },
     { .name = "export-selected", .activate = export_selected_action_cb },
@@ -2003,10 +2263,16 @@ create_setup_view (Pinpoint *pinpoint)
   GtkWidget *view_introduction = gtk_button_new_with_label ("View");
   GtkWidget *save_introduction = gtk_button_new_from_icon_name (
     "document-save-symbolic");
+  GtkWidget *edit_introduction = gtk_button_new_with_label ("Open in Editor…");
+  GtkWidget *edit_introduction_row = adw_action_row_new ();
   GtkWidget *group = adw_preferences_group_new ();
   GtkWidget *buttons = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
-  GtkWidget *open = gtk_button_new_with_label ("Open Presentation Folder…");
-  GtkWidget *selected_actions = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+  GtkWidget *open = gtk_button_new_with_label ("Present from Folder…");
+  GtkWidget *new_presentation = gtk_button_new_with_label ("New Presentation");
+  GtkWidget *selected_section = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
+  GtkWidget *selected_group = adw_preferences_group_new ();
+  GtkWidget *selected_actions = gtk_flow_box_new ();
+  GtkWidget *edit = gtk_button_new_with_label ("Edit");
   GtkWidget *present = gtk_button_new_with_label ("Present");
   GtkWidget *rehearse = gtk_button_new_with_label ("Rehearse");
   GtkWidget *validate = gtk_button_new_with_label ("Validate");
@@ -2017,7 +2283,8 @@ create_setup_view (Pinpoint *pinpoint)
                                    actions,
                                    G_N_ELEMENTS (actions),
                                    pinpoint);
-  g_menu_append (menu, "Open Presentation Folder…", "win.open-presentation");
+  g_menu_append (menu, "Present from Folder…", "win.open-presentation");
+  g_menu_append (menu, "New Presentation", "win.new-presentation");
   g_menu_append (menu, "Export to PDF…", "win.export-pdf");
   g_menu_append (menu,
                  "Presentation Format",
@@ -2085,26 +2352,41 @@ create_setup_view (Pinpoint *pinpoint)
 
   gtk_box_set_homogeneous (GTK_BOX (buttons), TRUE);
   gtk_widget_set_hexpand (open, TRUE);
+  gtk_widget_set_hexpand (new_presentation, TRUE);
   gtk_widget_add_css_class (open, "suggested-action");
   gtk_widget_add_css_class (open, "pill");
+  gtk_widget_add_css_class (new_presentation, "pill");
   gtk_box_append (GTK_BOX (buttons), open);
+  gtk_box_append (GTK_BOX (buttons), new_presentation);
   gtk_box_append (GTK_BOX (content), buttons);
   g_signal_connect (open,
                     "clicked",
                     G_CALLBACK (open_presentation_clicked_cb),
                     pinpoint);
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (new_presentation),
+                                  "win.new-presentation");
 
-  pinpoint->setup_selected_group = ADW_PREFERENCES_GROUP (
-    adw_preferences_group_new ());
+  pinpoint->setup_selected_section = selected_section;
   pinpoint->setup_selected_row = ADW_ACTION_ROW (adw_action_row_new ());
-  adw_preferences_group_set_title (pinpoint->setup_selected_group,
+  adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (selected_group),
                                    "Selected Presentation");
-  gtk_widget_set_visible (GTK_WIDGET (pinpoint->setup_selected_group), FALSE);
+  gtk_widget_set_visible (selected_section, FALSE);
+  gtk_flow_box_set_selection_mode (GTK_FLOW_BOX (selected_actions),
+                                   GTK_SELECTION_NONE);
+  gtk_flow_box_set_homogeneous (GTK_FLOW_BOX (selected_actions), TRUE);
+  gtk_flow_box_set_min_children_per_line (GTK_FLOW_BOX (selected_actions), 1);
+  gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (selected_actions), 3);
+  gtk_flow_box_set_column_spacing (GTK_FLOW_BOX (selected_actions), 6);
+  gtk_flow_box_set_row_spacing (GTK_FLOW_BOX (selected_actions), 6);
+  gtk_widget_set_hexpand (selected_actions, TRUE);
   gtk_widget_add_css_class (present, "suggested-action");
   gtk_widget_add_css_class (present, "pill");
   gtk_widget_add_css_class (rehearse, "pill");
   gtk_widget_add_css_class (validate, "flat");
   gtk_widget_add_css_class (export, "flat");
+  gtk_widget_add_css_class (edit, "pill");
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (edit),
+                                  "win.edit-selected");
   gtk_actionable_set_action_name (GTK_ACTIONABLE (present),
                                   "win.present-selected");
   gtk_actionable_set_action_name (GTK_ACTIONABLE (rehearse),
@@ -2113,14 +2395,21 @@ create_setup_view (Pinpoint *pinpoint)
                                   "win.validate-selected");
   gtk_actionable_set_action_name (GTK_ACTIONABLE (export),
                                   "win.export-selected");
-  gtk_box_append (GTK_BOX (selected_actions), present);
-  gtk_box_append (GTK_BOX (selected_actions), rehearse);
-  gtk_box_append (GTK_BOX (selected_actions), validate);
-  gtk_box_append (GTK_BOX (selected_actions), export);
-  adw_action_row_add_suffix (pinpoint->setup_selected_row, selected_actions);
-  adw_preferences_group_add (pinpoint->setup_selected_group,
+  gtk_widget_set_hexpand (edit, TRUE);
+  gtk_widget_set_hexpand (present, TRUE);
+  gtk_widget_set_hexpand (rehearse, TRUE);
+  gtk_widget_set_hexpand (validate, TRUE);
+  gtk_widget_set_hexpand (export, TRUE);
+  gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), edit, -1);
+  gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), present, -1);
+  gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), rehearse, -1);
+  gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), validate, -1);
+  gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), export, -1);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (selected_group),
                              GTK_WIDGET (pinpoint->setup_selected_row));
-  gtk_box_append (GTK_BOX (content), GTK_WIDGET (pinpoint->setup_selected_group));
+  gtk_box_append (GTK_BOX (selected_section), selected_group);
+  gtk_box_append (GTK_BOX (selected_section), selected_actions);
+  gtk_box_append (GTK_BOX (content), selected_section);
   set_selected_actions_enabled (pinpoint, FALSE);
 
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (learn_group),
@@ -2148,6 +2437,18 @@ create_setup_view (Pinpoint *pinpoint)
                                   -1);
   adw_action_row_add_suffix (ADW_ACTION_ROW (learn_row), save_introduction);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (learn_group), learn_row);
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (edit_introduction_row),
+                                 "Make an Editable Copy");
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (edit_introduction_row),
+                               "Copy the introduction and open it in the composition editor");
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (edit_introduction),
+                                  "win.edit-introduction");
+  gtk_widget_set_valign (edit_introduction, GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class (edit_introduction, "pill");
+  adw_action_row_add_suffix (ADW_ACTION_ROW (edit_introduction_row),
+                             edit_introduction);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (learn_group),
+                             edit_introduction_row);
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group),
                                    "Presentation Options");
   pinpoint->setup_fullscreen = ADW_SWITCH_ROW (adw_switch_row_new ());
@@ -2445,6 +2746,17 @@ control_command_cb (PpControl       *control,
 }
 
 static void
+editor_presentation_ended_cb (PpStage  *stage,
+                              gpointer  user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  (void) stage;
+  if (pinpoint->editor_presentation_active && !pinpoint->editor_rehearsing)
+    finish_editor_presentation (pinpoint, FALSE);
+}
+
+static void
 monitors_changed_cb (GListModel *model,
                      guint       position,
                      guint       removed,
@@ -2501,6 +2813,11 @@ key_pressed_cb (GtkEventControllerKey *controller,
     case GDK_KEY_Escape:
     case GDK_KEY_q:
     case GDK_KEY_Q:
+      if (pinpoint->editor_presentation_active)
+        {
+          finish_editor_presentation (pinpoint, FALSE);
+          return GDK_EVENT_STOP;
+        }
       g_application_quit (G_APPLICATION (pinpoint->application));
       return GDK_EVENT_STOP;
 
@@ -2702,6 +3019,16 @@ end_presentation_clicked_cb (GtkButton *button,
 
   (void) button;
   hide_end_presentation_control (pinpoint);
+  if (pinpoint->editor_presentation_active)
+    {
+      gboolean rehearsing = pinpoint->editor_rehearsing;
+
+      if (rehearsing)
+        pp_stage_next (pinpoint->stage);
+      if (pinpoint->editor_presentation_active)
+        finish_editor_presentation (pinpoint, FALSE);
+      return;
+    }
   pp_stage_next (pinpoint->stage);
   set_fullscreen (pinpoint, FALSE);
   set_speaker_visible (pinpoint, FALSE);
@@ -2850,6 +3177,10 @@ activate_cb (GtkApplication *application,
                     "slide-changed",
                     G_CALLBACK (slide_changed_cb),
                     pinpoint);
+  g_signal_connect (pinpoint->stage,
+                    "presentation-ended",
+                    G_CALLBACK (editor_presentation_ended_cb),
+                    pinpoint);
 
   pinpoint->control = pp_control_new (G_ACTION_MAP (application),
                                       G_ACTION_GROUP (application));
@@ -2928,6 +3259,9 @@ activate_cb (GtkApplication *application,
                                          "win.open-presentation",
                                          (const char *[]) { "<Primary>o", NULL });
   gtk_application_set_accels_for_action (application,
+                                         "win.new-presentation",
+                                         (const char *[]) { "<Primary>n", NULL });
+  gtk_application_set_accels_for_action (application,
                                          "win.present-selected",
                                          (const char *[]) { "<Primary>p", NULL });
   gtk_application_set_accels_for_action (application,
@@ -2960,7 +3294,12 @@ activate_cb (GtkApplication *application,
     }
 
   gtk_window_present (pinpoint->window);
-  if (pinpoint->file != NULL)
+  if (pinpoint->edit_mode)
+    {
+      if (!show_editor (pinpoint, pinpoint->file))
+        gtk_stack_set_visible_child_name (pinpoint->view_stack, "setup");
+    }
+  else if (pinpoint->file != NULL)
     {
       if (!start_loaded_presentation (pinpoint))
         {
@@ -3093,6 +3432,8 @@ main (int   argc,
       "Show the speaker window", NULL },
     { "rehearse", 'r', 0, G_OPTION_ARG_NONE, &pinpoint.rehearse,
       "Rehearse timings", NULL },
+    { "edit", 0, 0, G_OPTION_ARG_NONE, &pinpoint.edit_mode,
+      "Open the composition editor", NULL },
     { "ignore-comments", 'i', 0, G_OPTION_ARG_NONE, &pinpoint.ignore_comments,
       "Do not show comments as speaker notes", NULL },
     { "output", 'o', 0, G_OPTION_ARG_FILENAME, &output_filename,
@@ -3144,6 +3485,15 @@ main (int   argc,
   if (files != NULL && files[0] != NULL && files[1] != NULL)
     {
       g_printerr ("pinpoint: exactly one presentation may be specified\n");
+      pinpoint_clear (&pinpoint);
+      return EXIT_FAILURE;
+    }
+
+  if (pinpoint.edit_mode &&
+      (check_only || output_filename != NULL || pinpoint.rehearse ||
+       pinpoint.fullscreen || pinpoint.speaker_mode))
+    {
+      g_printerr ("pinpoint: --edit cannot be combined with presentation, rehearsal, check, or PDF options\n");
       pinpoint_clear (&pinpoint);
       return EXIT_FAILURE;
     }

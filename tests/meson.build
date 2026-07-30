@@ -4,6 +4,13 @@ parser_test = executable(
   dependencies: [pinpoint_core_dep],
 )
 
+source_test = executable(
+  'test-source',
+  'test-source.c',
+  dependencies: [pinpoint_core_dep],
+)
+test('source', source_test)
+
 asset_monitor_test = executable(
   'test-asset-monitor',
   'test-asset-monitor.c',
@@ -64,7 +71,9 @@ if gtksourceview_test_dep.found()
   test(
     'Pinpoint language highlighting',
     language_definition_test,
-    args: [pinpoint_language, files('fixtures/editor-highlighting.pin')],
+    args: [pinpoint_language,
+           files('fixtures/editor-highlighting.pin'),
+           files('../data/pinpoint-style.xml')],
   )
 endif
 

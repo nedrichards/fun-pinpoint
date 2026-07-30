@@ -12,6 +12,18 @@ Exactly one presentation may be supplied. Running without one opens the GTK
 setup screen; supplying more than one is an error instead of silently ignoring
 the additional paths.
 
+Open an existing deck in composition mode, or start an untitled deck, with:
+
+```sh
+pinpoint --edit presentation.pin
+pinpoint --edit
+```
+
+Composition mode cannot be combined with checking, PDF output, rehearsal,
+speaker mode, or presentation fullscreen options. GtkSourceView lives in an
+optional module and is loaded only for this mode; a presenter-only build gives
+a clear error when `--edit` is requested.
+
 Use `--version` for the installed version and `--help` for the complete option
 list.
 

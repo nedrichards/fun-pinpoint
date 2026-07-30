@@ -52,10 +52,19 @@ custom_target(
 )
 
 pinpoint_language = files('pinpoint.lang')
+pinpoint_style_schemes = files(
+  'pinpoint-style.xml',
+  'pinpoint-dark-style.xml',
+)
 
 install_data(
   pinpoint_language,
   install_dir: get_option('datadir') / 'gtksourceview-5/language-specs',
+)
+
+install_data(
+  pinpoint_style_schemes,
+  install_dir: get_option('datadir') / 'gtksourceview-5/styles',
 )
 
 desktop_file_validate = find_program('desktop-file-validate', required: false)

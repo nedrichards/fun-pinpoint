@@ -10,6 +10,11 @@ original file. When a sandboxed presentation is reached through the document
 portal, where host-side file events are not forwarded reliably, Pinpoint checks
 the file's revision twice a second instead.
 
+Pinpoint also provides an optional built-in
+[composition mode](composition-editor.md). It uses the same plain-text file,
+language definition, parser, and renderer; this page remains the supported path
+for hackers who prefer Text Editor, Builder, Vim, Emacs, or another tool.
+
 ## GtkSourceView 5 highlighting
 
 Pinpoint ships `data/pinpoint.lang`, a GtkSourceView 5 language definition. It

@@ -844,6 +844,40 @@ test_pdf_export_rejects_source_alias (void)
 }
 
 static void
+test_edit_argument_errors (void)
+{
+  const char *arguments[] = {
+    pinpoint_path,
+    "--edit",
+    "--check",
+    presentation_path,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = launch_application (arguments);
+  g_autofree char *stderr_text = finish_process (process, EXIT_FAILURE);
+
+  g_assert_nonnull (strstr (stderr_text, "--edit cannot be combined"));
+}
+
+static void
+test_editor_startup_shutdown (void)
+{
+  const char *arguments[] = {
+    pinpoint_path,
+    "--edit",
+    presentation_path,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = launch_application (arguments);
+
+  run_loop_for (750);
+  g_assert_true (process_is_running (process));
+  g_subprocess_send_signal (process, SIGINT);
+  g_autofree char *stderr_text = finish_process (process, 128 + SIGINT);
+  g_assert_null (strstr (stderr_text, "pinpoint: "));
+}
+
+static void
 test_rehearsal_ctrl_c_preserves_source (void)
 {
   g_autofree char *directory = g_dir_make_tmp ("pinpoint-rehearse-signal-XXXXXX",
@@ -960,6 +994,10 @@ main (int   argc,
                    test_multiple_presentations_are_rejected);
   g_test_add_func ("/application/check-argument-errors",
                    test_check_argument_errors);
+  g_test_add_func ("/application/edit-argument-errors",
+                   test_edit_argument_errors);
+  g_test_add_func ("/application/editor-startup-shutdown",
+                   test_editor_startup_shutdown);
   g_test_add_func ("/application/software-renderer-is-rejected",
                    test_software_renderer_is_rejected);
   g_test_add_func ("/application/pdf-export", test_pdf_export);

@@ -148,6 +148,8 @@ void            pp_presentation_rehearsal_reset (PpPresentation *self);
 void            pp_presentation_rehearsal_record (PpPresentation *self,
                                                    guint           index,
                                                    double          seconds);
+double          pp_presentation_rehearsal_get_duration (const PpPresentation *self,
+                                                        guint                 index);
 gboolean        pp_presentation_rehearsal_finish (PpPresentation *self,
                                                   GError        **error);
 

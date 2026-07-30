@@ -10,3 +10,9 @@ MimeType=application/x-pinpoint;
 StartupNotify=true
 DBusActivatable=false
 Keywords=presentation;slides;talk;hacker;plain-text;
+Actions=NewPresentation;
+
+[Desktop Action NewPresentation]
+Name=New Presentation
+Exec=pinpoint --edit
+Icon=document-new-symbolic
