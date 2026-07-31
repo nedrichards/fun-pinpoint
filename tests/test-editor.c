@@ -1,7 +1,14 @@
 #include "pp-editor-module.h"
 
+#include <glib/gstdio.h>
 #include <gmodule.h>
 #include <gtksourceview/gtksource.h>
+
+typedef struct
+{
+  guint close_count;
+  gboolean close_quit;
+} HostState;
 
 static void
 run_loop_for (guint milliseconds)
@@ -13,6 +20,160 @@ run_loop_for (guint milliseconds)
       while (g_main_context_iteration (NULL, FALSE));
       g_usleep (1000);
     }
+}
+
+static GtkWidget *
+find_label (GtkWidget  *widget,
+            const char *text)
+{
+  if (GTK_IS_LABEL (widget) &&
+      g_strcmp0 (gtk_label_get_text (GTK_LABEL (widget)), text) == 0)
+    return widget;
+
+  for (GtkWidget *child = gtk_widget_get_first_child (widget);
+       child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    {
+      GtkWidget *label = find_label (child, text);
+
+      if (label != NULL)
+        return label;
+    }
+  return NULL;
+}
+
+static GtkWidget *
+find_button (GtkWidget  *widget,
+             const char *label)
+{
+  if (GTK_IS_BUTTON (widget) &&
+      (g_strcmp0 (gtk_button_get_label (GTK_BUTTON (widget)), label) == 0 ||
+       find_label (widget, label) != NULL))
+    return widget;
+
+  for (GtkWidget *child = gtk_widget_get_first_child (widget);
+       child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    {
+      GtkWidget *button = find_button (child, label);
+
+      if (button != NULL)
+        return button;
+    }
+  return NULL;
+}
+
+static GtkWidget *
+wait_for_button (GtkWidget  *root,
+                 const char *label)
+{
+  gint64 deadline = g_get_monotonic_time () + G_TIME_SPAN_SECOND * 2;
+  GtkWidget *button;
+
+  do
+    {
+      while (g_main_context_iteration (NULL, FALSE));
+      button = find_button (root, label);
+      if (button != NULL)
+        return button;
+      GListModel *toplevels = gtk_window_get_toplevels ();
+
+      for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+        {
+          g_autoptr (GtkWindow) window = g_list_model_get_item (toplevels, i);
+
+          if (GTK_WIDGET (window) == root)
+            continue;
+          button = find_button (GTK_WIDGET (window), label);
+          if (button != NULL)
+            return button;
+        }
+      g_usleep (1000);
+    }
+  while (g_get_monotonic_time () < deadline);
+  return NULL;
+}
+
+static GtkWidget *
+wait_for_dialog_button (const char *title,
+                        const char *label)
+{
+  gint64 deadline = g_get_monotonic_time () + G_TIME_SPAN_SECOND * 2;
+
+  do
+    {
+      GListModel *toplevels;
+
+      while (g_main_context_iteration (NULL, FALSE));
+      toplevels = gtk_window_get_toplevels ();
+      for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+        {
+          g_autoptr (GtkWindow) window = g_list_model_get_item (toplevels, i);
+
+          if (find_label (GTK_WIDGET (window), title) != NULL)
+            return find_button (GTK_WIDGET (window), label);
+        }
+      g_usleep (1000);
+    }
+  while (g_get_monotonic_time () < deadline);
+  return NULL;
+}
+
+static char *
+get_buffer_text (GtkTextBuffer *buffer)
+{
+  GtkTextIter start;
+  GtkTextIter end;
+
+  gtk_text_buffer_get_bounds (buffer, &start, &end);
+  return gtk_text_buffer_get_text (buffer, &start, &end, TRUE);
+}
+
+static gboolean
+wait_for_buffer_text (GtkTextBuffer *buffer,
+                      const char    *expected)
+{
+  gint64 deadline = g_get_monotonic_time () + G_TIME_SPAN_SECOND * 2;
+
+  do
+    {
+      g_autofree char *text = NULL;
+
+      while (g_main_context_iteration (NULL, FALSE));
+      text = get_buffer_text (buffer);
+      if (g_str_equal (text, expected))
+        return TRUE;
+      g_usleep (1000);
+    }
+  while (g_get_monotonic_time () < deadline);
+  return FALSE;
+}
+
+static void
+close_editor_cb (gboolean quit,
+                 gpointer user_data)
+{
+  HostState *state = user_data;
+
+  state->close_count++;
+  state->close_quit = quit;
+}
+
+static gboolean
+wait_for_close_count (HostState *state,
+                      guint      expected)
+{
+  gint64 deadline = g_get_monotonic_time () + G_TIME_SPAN_SECOND * 2;
+
+  do
+    {
+      while (g_main_context_iteration (NULL, FALSE));
+      if (state->close_count == expected)
+        return TRUE;
+      g_usleep (1000);
+    }
+  while (g_get_monotonic_time () < deadline);
+  return FALSE;
 }
 
 static GtkSourceView *
@@ -132,6 +293,125 @@ assert_reparse_preserves_cursor (PpEditorModuleCreateFunc create_editor,
   run_loop_for (50);
 }
 
+static void
+assert_file_lifecycle (PpEditorModuleCreateFunc create_editor,
+                       const PpEditorHost       *host)
+{
+  static const char initial[] = "--\nOriginal\n";
+  static const char edited[] = "--\nEdited\n";
+  static const char external[] = "--\nExternal\n";
+  static const char local[] = "--\nLocal\n";
+  static const char conflict[] = "--\nConflict\n";
+  g_autoptr (GError) error = NULL;
+  g_autofree char *directory = g_dir_make_tmp ("pinpoint-editor-XXXXXX", &error);
+  g_autofree char *path = NULL;
+  g_autofree char *saved = NULL;
+  g_autoptr (GFile) file = NULL;
+  GtkWindow *window = GTK_WINDOW (gtk_window_new ());
+  GtkWidget *editor;
+  GtkSourceView *view;
+  GtkTextBuffer *buffer;
+  GtkWidget *button;
+
+  g_assert_no_error (error);
+  g_assert_nonnull (directory);
+  path = g_build_filename (directory, "lifecycle.pin", NULL);
+  g_assert_true (g_file_set_contents (path, initial, -1, &error));
+  g_assert_no_error (error);
+  file = g_file_new_for_path (path);
+  editor = create_editor (host, file);
+  g_assert_nonnull (editor);
+  gtk_window_set_child (window, editor);
+  gtk_window_present (window);
+  run_loop_for (100);
+  view = find_source_view (editor);
+  g_assert_nonnull (view);
+  buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+
+  gtk_text_buffer_set_text (buffer, edited, -1);
+  button = wait_for_button (GTK_WIDGET (window), "Save");
+  g_assert_nonnull (button);
+  g_assert_true (gtk_widget_activate (button));
+  run_loop_for (300);
+  g_assert_true (g_file_get_contents (path, &saved, NULL, &error));
+  g_assert_no_error (error);
+  g_assert_cmpstr (saved, ==, edited);
+  g_clear_pointer (&saved, g_free);
+
+  g_assert_true (g_file_set_contents (path, external, -1, &error));
+  g_assert_no_error (error);
+  g_assert_true (wait_for_buffer_text (buffer, external));
+  g_assert_false (gtk_text_buffer_get_modified (buffer));
+  run_loop_for (300);
+
+  gtk_text_buffer_set_text (buffer, local, -1);
+  g_assert_true (g_file_set_contents (path, conflict, -1, &error));
+  g_assert_no_error (error);
+  button = wait_for_dialog_button ("Presentation Changed on Disk", "Reload");
+  g_assert_nonnull (button);
+  g_assert_true (gtk_widget_activate (button));
+  g_assert_true (wait_for_buffer_text (buffer, conflict));
+  g_assert_false (gtk_text_buffer_get_modified (buffer));
+
+  gtk_window_destroy (window);
+  run_loop_for (50);
+  g_assert_cmpint (g_remove (path), ==, 0);
+  g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+static void
+assert_close_and_durations (PpEditorModuleCreateFunc         create_editor,
+                            PpEditorModuleApplyDurationsFunc apply_durations,
+                            PpEditorModuleRequestCloseFunc   request_close,
+                            PpEditorHost                    *host,
+                            HostState                       *state)
+{
+  static const char source[] = "-- [duration=1]\nOne\n--\nTwo\n";
+  static const char expected[] =
+    "-- [duration=5]\nOne\n-- [duration=8.375]\nTwo\n";
+  const double durations[] = { 5.0, 8.375 };
+  GtkWindow *window = GTK_WINDOW (gtk_window_new ());
+  GtkWidget *editor = create_editor (host, NULL);
+  GtkSourceView *view;
+  GtkTextBuffer *buffer;
+  GtkWidget *button;
+  g_autofree char *updated = NULL;
+
+  g_assert_nonnull (editor);
+  gtk_window_set_child (window, editor);
+  gtk_window_present (window);
+  run_loop_for (100);
+  view = find_source_view (editor);
+  g_assert_nonnull (view);
+  buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+  gtk_text_buffer_set_text (buffer, source, -1);
+  run_loop_for (250);
+
+  apply_durations (editor, durations, G_N_ELEMENTS (durations));
+  button = wait_for_dialog_button ("Apply Rehearsal Timings?", "Apply Timings");
+  g_assert_nonnull (button);
+  g_assert_true (gtk_widget_activate (button));
+  g_assert_true (wait_for_buffer_text (buffer, expected));
+  updated = get_buffer_text (buffer);
+  g_assert_cmpstr (updated, ==, expected);
+  g_assert_true (gtk_text_buffer_get_modified (buffer));
+
+  request_close (editor, FALSE);
+  button = wait_for_dialog_button ("Save Changes?", "Discard");
+  g_assert_nonnull (button);
+  g_assert_true (gtk_widget_activate (button));
+  g_assert_true (wait_for_close_count (state, 1));
+  g_assert_false (state->close_quit);
+
+  gtk_text_buffer_set_modified (buffer, FALSE);
+  request_close (editor, TRUE);
+  g_assert_cmpuint (state->close_count, ==, 2);
+  g_assert_true (state->close_quit);
+
+  gtk_window_destroy (window);
+  run_loop_for (50);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -139,8 +419,11 @@ main (int   argc,
   GModule *module;
   PpEditorModuleGetAbiFunc get_abi = NULL;
   PpEditorModuleCreateFunc create_editor = NULL;
+  PpEditorModuleApplyDurationsFunc apply_durations = NULL;
+  PpEditorModuleRequestCloseFunc request_close = NULL;
   g_autoptr (GtkApplication) application = NULL;
   PpEditorHost host;
+  HostState state = { 0 };
 
   g_test_init (&argc, &argv, NULL);
   g_assert_cmpint (argc, ==, 2);
@@ -156,6 +439,12 @@ main (int   argc,
   g_assert_true (g_module_symbol (module,
                                   "pp_editor_module_create",
                                   (gpointer *) &create_editor));
+  g_assert_true (g_module_symbol (module,
+                                  "pp_editor_module_apply_durations",
+                                  (gpointer *) &apply_durations));
+  g_assert_true (g_module_symbol (module,
+                                  "pp_editor_module_request_close",
+                                  (gpointer *) &request_close));
   g_assert_cmpuint (get_abi (), ==, PP_EDITOR_MODULE_ABI);
 
   application = gtk_application_new ("com.nedrichards.pinpoint.EditorTest",
@@ -163,10 +452,18 @@ main (int   argc,
   host = (PpEditorHost) {
     .abi_version = PP_EDITOR_MODULE_ABI,
     .application = application,
+    .close = close_editor_cb,
+    .user_data = &state,
   };
 
   assert_reparse_preserves_cursor (create_editor, &host);
   assert_reparse_preserves_cursor (create_editor, &host);
+  assert_file_lifecycle (create_editor, &host);
+  assert_close_and_durations (create_editor,
+                              apply_durations,
+                              request_close,
+                              &host,
+                              &state);
 
   return 0;
 }

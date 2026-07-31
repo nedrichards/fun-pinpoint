@@ -152,12 +152,16 @@ timing_response_cb (AdwAlertDialog *dialog,
 {
   TimingPrompt *prompt = user_data;
   GtkTextBuffer *buffer = GTK_TEXT_BUFFER (prompt->editor->buffer);
+  GtkTextIter start;
+  GtkTextIter end;
 
   (void) dialog;
   if (!g_str_equal (response, "apply"))
     return;
+  gtk_text_buffer_get_bounds (buffer, &start, &end);
   gtk_text_buffer_begin_user_action (buffer);
-  gtk_text_buffer_set_text (buffer, prompt->updated_source, -1);
+  gtk_text_buffer_delete (buffer, &start, &end);
+  gtk_text_buffer_insert (buffer, &start, prompt->updated_source, -1);
   gtk_text_buffer_end_user_action (buffer);
   gtk_widget_grab_focus (GTK_WIDGET (prompt->editor->source_view));
 }
