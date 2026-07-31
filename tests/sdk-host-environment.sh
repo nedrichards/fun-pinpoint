@@ -104,6 +104,10 @@ pinpoint_configure_sdk_host_environment ()
   fi
 
   export LD_LIBRARY_PATH="${pinpoint_codecs_libdir:+$pinpoint_codecs_libdir:}$pinpoint_gl_ld_path:$pinpoint_sdk_libdir:$pinpoint_sdk_libdir/pulseaudio${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  # Libraries executed outside Flatpak still need the matching SDK data files,
+  # including GtkSourceView's RelaxNG language schema.
+  pinpoint_sdk_data_dirs=${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
+  export XDG_DATA_DIRS="$pinpoint_sdk_location/files/share:$pinpoint_sdk_data_dirs"
   export __EGL_VENDOR_LIBRARY_FILENAMES="$pinpoint_egl_manifests"
   export LIBGL_DRIVERS_PATH="$pinpoint_dri_path"
   if [ -n "$pinpoint_gbm_path" ]

@@ -18,6 +18,7 @@ typedef struct
   GtkSourceBuffer *buffer;
   GtkSourceView *source_view;
   GtkListBox *outline;
+  GtkScrolledWindow *outline_scroll;
   PpStage *preview;
   GtkLabel *status;
   GtkButton *save_button;
@@ -31,6 +32,9 @@ typedef struct
   char *etag;
   PpSourceAnalysis *analysis;
   guint reparse_id;
+  guint outline_scroll_id;
+  guint outline_scroll_index;
+  guint outline_scroll_attempts;
   guint external_reload_id;
   guint portal_poll_id;
   gboolean conflict_visible;
@@ -53,34 +57,52 @@ static void
 add_editor_resource_paths (GtkSourceLanguageManager    *languages,
                            GtkSourceStyleSchemeManager *schemes)
 {
+  static const char language_resource[] =
+    "resource:///com/nedrichards/pinpoint/gtksourceview-5/language-specs";
+  static const char style_resource[] =
+    "resource:///com/nedrichards/pinpoint/gtksourceview-5/styles";
   const char *const *language_paths;
   const char *const *scheme_paths;
   g_auto (GStrv) updated_language_paths = NULL;
   g_auto (GStrv) updated_scheme_paths = NULL;
   guint n_language_paths = 0;
   guint n_scheme_paths = 0;
+  gboolean add_language_resource = TRUE;
+  gboolean add_style_resource = TRUE;
 
   language_paths = gtk_source_language_manager_get_search_path (languages);
   while (language_paths[n_language_paths] != NULL)
-    n_language_paths++;
-  updated_language_paths = g_new0 (char *, n_language_paths + 2);
-  for (guint i = 0; i < n_language_paths; i++)
-    updated_language_paths[i] = g_strdup (language_paths[i]);
-  updated_language_paths[n_language_paths] = g_strdup (
-    "resource:///com/nedrichards/pinpoint/gtksourceview-5/language-specs");
-  gtk_source_language_manager_set_search_path (
-    languages, (const char *const *) updated_language_paths);
+    {
+      if (g_str_equal (language_paths[n_language_paths], language_resource))
+        add_language_resource = FALSE;
+      n_language_paths++;
+    }
+  if (add_language_resource)
+    {
+      updated_language_paths = g_new0 (char *, n_language_paths + 2);
+      for (guint i = 0; i < n_language_paths; i++)
+        updated_language_paths[i] = g_strdup (language_paths[i]);
+      updated_language_paths[n_language_paths] = g_strdup (language_resource);
+      gtk_source_language_manager_set_search_path (
+        languages, (const char *const *) updated_language_paths);
+    }
 
   scheme_paths = gtk_source_style_scheme_manager_get_search_path (schemes);
   while (scheme_paths[n_scheme_paths] != NULL)
-    n_scheme_paths++;
-  updated_scheme_paths = g_new0 (char *, n_scheme_paths + 2);
-  for (guint i = 0; i < n_scheme_paths; i++)
-    updated_scheme_paths[i] = g_strdup (scheme_paths[i]);
-  updated_scheme_paths[n_scheme_paths] = g_strdup (
-    "resource:///com/nedrichards/pinpoint/gtksourceview-5/styles");
-  gtk_source_style_scheme_manager_set_search_path (
-    schemes, (const char *const *) updated_scheme_paths);
+    {
+      if (g_str_equal (scheme_paths[n_scheme_paths], style_resource))
+        add_style_resource = FALSE;
+      n_scheme_paths++;
+    }
+  if (add_style_resource)
+    {
+      updated_scheme_paths = g_new0 (char *, n_scheme_paths + 2);
+      for (guint i = 0; i < n_scheme_paths; i++)
+        updated_scheme_paths[i] = g_strdup (scheme_paths[i]);
+      updated_scheme_paths[n_scheme_paths] = g_strdup (style_resource);
+      gtk_source_style_scheme_manager_set_search_path (
+        schemes, (const char *const *) updated_scheme_paths);
+    }
 }
 
 static void
@@ -535,55 +557,204 @@ back_clicked_cb (GtkButton *button,
   request_close (user_data, FALSE);
 }
 
-static void
-outline_clicked_cb (GtkButton *button,
-                    gpointer   user_data)
+static gboolean
+scroll_outline_to_selected (PpEditor *self)
+{
+  GtkListBoxRow *row = gtk_list_box_get_row_at_index (
+    self->outline, (int) self->outline_scroll_index);
+  GtkAdjustment *adjustment;
+  graphene_rect_t bounds;
+  double value;
+  double page_size;
+  double target;
+
+  if (row == NULL ||
+      !gtk_widget_compute_bounds (GTK_WIDGET (row),
+                                  GTK_WIDGET (self->outline),
+                                  &bounds))
+    return FALSE;
+  adjustment = gtk_scrolled_window_get_vadjustment (self->outline_scroll);
+  value = gtk_adjustment_get_value (adjustment);
+  page_size = gtk_adjustment_get_page_size (adjustment);
+  if (page_size <= 0.0 || bounds.size.height <= 0.0)
+    return FALSE;
+  target = value;
+  if (bounds.origin.y < value)
+    target = bounds.origin.y;
+  else if (bounds.origin.y + bounds.size.height > value + page_size)
+    target = bounds.origin.y + bounds.size.height - page_size;
+  gtk_adjustment_set_value (
+    adjustment,
+    CLAMP (target,
+           gtk_adjustment_get_lower (adjustment),
+           MAX (gtk_adjustment_get_lower (adjustment),
+                gtk_adjustment_get_upper (adjustment) - page_size)));
+  return TRUE;
+}
+
+static gboolean
+scroll_outline_to_selected_cb (gpointer user_data)
 {
   PpEditor *self = user_data;
-  guint index = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (button),
-                                                     "slide-index"));
+
+  if (!scroll_outline_to_selected (self) &&
+      self->outline_scroll_attempts++ < 5)
+    return G_SOURCE_CONTINUE;
+  self->outline_scroll_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
+static void
+queue_outline_scroll (PpEditor *self,
+                      guint     index)
+{
+  self->outline_scroll_index = index;
+  self->outline_scroll_attempts = 0;
+  if (self->outline_scroll_id != 0)
+    return;
+  self->outline_scroll_id = g_timeout_add (16,
+                                           scroll_outline_to_selected_cb,
+                                           self);
+  g_source_set_name_by_id (self->outline_scroll_id,
+                           "pinpoint-editor-outline-scroll");
+}
+
+static void
+select_outline_slide (PpEditor *self,
+                      guint     index)
+{
+  GtkListBoxRow *row = gtk_list_box_get_row_at_index (self->outline,
+                                                       (int) index);
+  gboolean was_syncing = self->syncing_slide;
+
+  if (row == NULL)
+    return;
+  if (gtk_list_box_get_selected_row (self->outline) != row)
+    {
+      self->syncing_slide = TRUE;
+      gtk_list_box_select_row (self->outline, row);
+      self->syncing_slide = was_syncing;
+    }
+  queue_outline_scroll (self, index);
+}
+
+static void
+set_preview_slide_if_available (PpEditor *self,
+                                guint     index)
+{
+  const PpPresentation *presentation = pp_stage_get_presentation (self->preview);
+
+  if (presentation != NULL &&
+      index < pp_presentation_get_n_slides (presentation))
+    pp_stage_set_slide (self->preview, index);
+}
+
+static void
+outline_selected_cb (GtkListBox    *outline,
+                     GtkListBoxRow *row,
+                     gpointer       user_data)
+{
+  PpEditor *self = user_data;
+  int row_index;
+  guint index;
   const PpSourceSlide *slide;
   GtkTextIter iter;
   g_autofree char *source = NULL;
 
-  if (self->analysis == NULL ||
-      index >= pp_source_analysis_get_n_slides (self->analysis))
+  (void) outline;
+  if (self->syncing_slide || row == NULL || self->analysis == NULL)
+    return;
+  row_index = gtk_list_box_row_get_index (row);
+  if (row_index < 0)
+    return;
+  index = (guint) row_index;
+  if (index >= pp_source_analysis_get_n_slides (self->analysis))
     return;
   slide = pp_source_analysis_get_slide (self->analysis, index);
   source = buffer_text (self);
   gtk_text_buffer_get_iter_at_offset (GTK_TEXT_BUFFER (self->buffer),
                                       &iter,
                                       byte_to_character_offset (source,
-                                                                slide->start));
+                                                                MIN (slide->separator_end + 1,
+                                                                     slide->end)));
   self->syncing_slide = TRUE;
   gtk_text_buffer_place_cursor (GTK_TEXT_BUFFER (self->buffer), &iter);
   gtk_text_view_scroll_to_iter (GTK_TEXT_VIEW (self->source_view),
                                 &iter, 0.15, FALSE, 0.0, 0.0);
-  pp_stage_set_slide (self->preview, index);
+  set_preview_slide_if_available (self, index);
   self->syncing_slide = FALSE;
   gtk_widget_grab_focus (GTK_WIDGET (self->source_view));
 }
 
 static void
-rebuild_outline (PpEditor *self)
+rebuild_outline (PpEditor *self,
+                 guint     selected_slide)
 {
-  gtk_list_box_remove_all (self->outline);
+  guint count = self->analysis != NULL
+    ? pp_source_analysis_get_n_slides (self->analysis) : 0;
+  guint existing = 0;
+
+  while (gtk_list_box_get_row_at_index (self->outline, (int) existing) != NULL)
+    existing++;
+  while (existing > count)
+    {
+      GtkListBoxRow *row = gtk_list_box_get_row_at_index (self->outline,
+                                                           (int) existing - 1);
+
+      gtk_list_box_remove (self->outline, GTK_WIDGET (row));
+      existing--;
+    }
   if (self->analysis == NULL)
     return;
 
-  for (guint i = 0; i < pp_source_analysis_get_n_slides (self->analysis); i++)
+  for (guint i = 0; i < count; i++)
     {
       const PpSourceSlide *slide = pp_source_analysis_get_slide (self->analysis, i);
-      GtkWidget *button = gtk_button_new_with_label (slide->title);
+      GtkListBoxRow *row = gtk_list_box_get_row_at_index (self->outline,
+                                                           (int) i);
+      GtkLabel *number;
+      GtkLabel *title;
+      g_autofree char *number_text = g_strdup_printf ("%u", i + 1);
 
-      gtk_widget_set_halign (button, GTK_ALIGN_FILL);
-      gtk_widget_add_css_class (button, "flat");
-      gtk_button_set_has_frame (GTK_BUTTON (button), FALSE);
-      gtk_widget_set_tooltip_text (button, slide->title);
-      g_object_set_data (G_OBJECT (button), "slide-index", GUINT_TO_POINTER (i));
-      g_signal_connect (button, "clicked", G_CALLBACK (outline_clicked_cb), self);
-      gtk_list_box_append (self->outline, button);
+      if (row == NULL)
+        {
+          GtkWidget *box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
+          GtkWidget *number_widget = gtk_label_new (NULL);
+          GtkWidget *title_widget = gtk_label_new (NULL);
+
+          row = GTK_LIST_BOX_ROW (gtk_list_box_row_new ());
+          number = GTK_LABEL (number_widget);
+          title = GTK_LABEL (title_widget);
+          gtk_label_set_xalign (number, 1.0f);
+          gtk_label_set_width_chars (number, 3);
+          gtk_widget_add_css_class (number_widget, "dim-label");
+          gtk_label_set_xalign (title, 0.0f);
+          gtk_label_set_wrap (title, TRUE);
+          gtk_label_set_wrap_mode (title, PANGO_WRAP_WORD_CHAR);
+          gtk_label_set_lines (title, 2);
+          gtk_label_set_ellipsize (title, PANGO_ELLIPSIZE_END);
+          gtk_widget_set_hexpand (title_widget, TRUE);
+          gtk_widget_set_margin_start (box, 8);
+          gtk_widget_set_margin_end (box, 8);
+          gtk_widget_set_margin_top (box, 5);
+          gtk_widget_set_margin_bottom (box, 5);
+          gtk_box_append (GTK_BOX (box), number_widget);
+          gtk_box_append (GTK_BOX (box), title_widget);
+          gtk_list_box_row_set_child (row, box);
+          g_object_set_data (G_OBJECT (row), "pinpoint-slide-number", number);
+          g_object_set_data (G_OBJECT (row), "pinpoint-slide-title", title);
+          gtk_list_box_append (self->outline, GTK_WIDGET (row));
+        }
+      else
+        {
+          number = g_object_get_data (G_OBJECT (row), "pinpoint-slide-number");
+          title = g_object_get_data (G_OBJECT (row), "pinpoint-slide-title");
+        }
+      gtk_label_set_text (number, number_text);
+      gtk_label_set_text (title, slide->title);
+      gtk_widget_set_tooltip_text (GTK_WIDGET (row), slide->title);
     }
+  select_outline_slide (self, selected_slide);
 }
 
 static void
@@ -641,22 +812,24 @@ editor_reparse (PpEditor *self)
 
   g_clear_pointer (&self->analysis, pp_source_analysis_free);
   self->analysis = pp_source_analyze (source, self->file);
-  rebuild_outline (self);
-  apply_diagnostics (self);
   gtk_text_buffer_get_iter_at_mark (GTK_TEXT_BUFFER (self->buffer),
                                     &insert,
                                     gtk_text_buffer_get_insert (GTK_TEXT_BUFFER (self->buffer)));
   slide = pp_source_analysis_find_slide (self->analysis,
                                          iter_byte_offset (self, &insert));
+  rebuild_outline (self, slide);
+  apply_diagnostics (self);
   presentation = pp_presentation_parse (source, self->file, FALSE, &error);
   diagnostics = pp_source_analysis_get_n_diagnostics (self->analysis);
   if (presentation != NULL)
     {
       guint count = pp_presentation_get_n_slides (presentation);
 
+      self->syncing_slide = TRUE;
       pp_stage_set_presentation (self->preview,
                                  g_steal_pointer (&presentation),
                                  MIN (slide, count - 1));
+      self->syncing_slide = FALSE;
       status = g_strdup_printf ("%u slide%s · %u problem%s",
                                 count, count == 1 ? "" : "s",
                                 diagnostics, diagnostics == 1 ? "" : "s");
@@ -696,13 +869,17 @@ cursor_moved_cb (GtkTextBuffer *buffer,
                  gpointer       user_data)
 {
   PpEditor *self = user_data;
+  guint slide;
 
   if (self->syncing_slide || self->analysis == NULL ||
       mark != gtk_text_buffer_get_insert (buffer))
     return;
-  pp_stage_set_slide (self->preview,
-                      pp_source_analysis_find_slide (self->analysis,
-                                                     iter_byte_offset (self, location)));
+  slide = pp_source_analysis_find_slide (self->analysis,
+                                         iter_byte_offset (self, location));
+  select_outline_slide (self, slide);
+  self->syncing_slide = TRUE;
+  set_preview_slide_if_available (self, slide);
+  self->syncing_slide = FALSE;
 }
 
 static void
@@ -724,11 +901,13 @@ preview_slide_changed_cb (PpStage *stage,
   gtk_text_buffer_get_iter_at_offset (GTK_TEXT_BUFFER (self->buffer),
                                       &iter,
                                       byte_to_character_offset (source,
-                                                                slide->start));
+                                                                MIN (slide->separator_end + 1,
+                                                                     slide->end)));
   self->syncing_slide = TRUE;
   gtk_text_buffer_place_cursor (GTK_TEXT_BUFFER (self->buffer), &iter);
   gtk_text_view_scroll_to_iter (GTK_TEXT_VIEW (self->source_view),
                                 &iter, 0.15, FALSE, 0.0, 0.0);
+  select_outline_slide (self, index);
   self->syncing_slide = FALSE;
 }
 
@@ -896,6 +1075,8 @@ editor_free (gpointer data)
 
   if (self->reparse_id != 0)
     g_source_remove (self->reparse_id);
+  if (self->outline_scroll_id != 0)
+    g_source_remove (self->outline_scroll_id);
   if (self->external_reload_id != 0)
     g_source_remove (self->external_reload_id);
   if (self->portal_poll_id != 0)
@@ -925,11 +1106,13 @@ create_editor (PpEditor *self)
   GtkWidget *status_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
   GtkWidget *title = gtk_label_new ("Compose Presentation");
   GtkEventController *keys = gtk_event_controller_key_new ();
-  GtkSourceLanguageManager *languages = gtk_source_language_manager_get_default ();
-  GtkSourceStyleSchemeManager *schemes =
-    gtk_source_style_scheme_manager_get_default ();
+  GtkSourceLanguageManager *languages;
+  GtkSourceStyleSchemeManager *schemes;
   GtkSourceLanguage *language;
 
+  gtk_source_init ();
+  languages = gtk_source_language_manager_get_default ();
+  schemes = gtk_source_style_scheme_manager_get_default ();
   add_editor_resource_paths (languages, schemes);
   language = gtk_source_language_manager_get_language (languages, "pinpoint");
 
@@ -963,8 +1146,10 @@ create_editor (PpEditor *self)
                                               self);
   update_editor_style (self);
   self->outline = GTK_LIST_BOX (gtk_list_box_new ());
-  gtk_list_box_set_selection_mode (self->outline, GTK_SELECTION_NONE);
-  gtk_widget_set_size_request (GTK_WIDGET (self->outline), 180, -1);
+  self->outline_scroll = GTK_SCROLLED_WINDOW (outline_scroll);
+  gtk_list_box_set_selection_mode (self->outline, GTK_SELECTION_SINGLE);
+  gtk_widget_add_css_class (GTK_WIDGET (self->outline), "navigation-sidebar");
+  gtk_widget_set_size_request (GTK_WIDGET (self->outline), 220, -1);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (outline_scroll),
                                  GTK_WIDGET (self->outline));
   gtk_widget_add_css_class (outline_scroll, "sidebar");
@@ -999,7 +1184,7 @@ create_editor (PpEditor *self)
   gtk_paned_set_end_child (GTK_PANED (outer), work);
   gtk_paned_set_resize_start_child (GTK_PANED (outer), FALSE);
   gtk_paned_set_shrink_start_child (GTK_PANED (outer), TRUE);
-  gtk_paned_set_position (GTK_PANED (outer), 190);
+  gtk_paned_set_position (GTK_PANED (outer), 230);
 
   gtk_widget_set_tooltip_text (back, "Back to presentation setup");
   g_signal_connect (back, "clicked", G_CALLBACK (back_clicked_cb), self);
@@ -1035,6 +1220,10 @@ create_editor (PpEditor *self)
   gtk_widget_add_controller (GTK_WIDGET (self->source_view), keys);
   g_signal_connect (self->buffer, "changed", G_CALLBACK (buffer_changed_cb), self);
   g_signal_connect (self->buffer, "mark-set", G_CALLBACK (cursor_moved_cb), self);
+  g_signal_connect (self->outline,
+                    "row-selected",
+                    G_CALLBACK (outline_selected_cb),
+                    self);
   return self->root;
 }
 

@@ -72,7 +72,7 @@ pinpoint_exe = executable(
 )
 
 if gtksourceview_dep.found()
-  shared_module(
+  pinpoint_editor_module = shared_module(
     'pinpoint-editor',
     'pp-editor.c',
     dependencies: [pinpoint_ui_dep, gtksourceview_dep],

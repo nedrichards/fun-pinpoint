@@ -75,6 +75,21 @@ if gtksourceview_test_dep.found()
            files('fixtures/editor-highlighting.pin'),
            files('../data/pinpoint-style.xml')],
   )
+
+  editor_test = executable(
+    'test-editor',
+    'test-editor.c',
+    dependencies: [glib_dep, gio_dep, gmodule_dep, gtk_dep,
+                   gtksourceview_test_dep],
+    include_directories: include_directories('../src'),
+  )
+  test(
+    'composition editor',
+    editor_test,
+    args: [pinpoint_editor_module],
+    is_parallel: false,
+    timeout: 10,
+  )
 endif
 
 performance_test = executable(

@@ -16,12 +16,16 @@ scheme and diagnostic colours immediately when the desktop appearance changes.
 
 ## Editing and preview
 
-The outline uses the first audience-text line as each slide title. Selecting a
-slide moves the source cursor and preview; moving the cursor updates both. The
+The outline uses the first audience-text line as each slide title. It presents
+a compact numbered list with left-aligned, wrapping titles and keeps the
+current slide selected and scrolled into view. Selecting a slide with a pointer
+or touch scrolls its source into view, places the insertion cursor at the first
+body line, and updates the preview. Moving the cursor updates the outline and
+preview without moving the insertion point to the start of the slide. The
 buffer is parsed after a 200 ms idle delay. Valid edits replace the preview
-without writing the file. If an incomplete edit cannot be parsed, Pinpoint
-keeps the last valid preview and labels it paused until the source is valid
-again.
+without writing the file or disturbing the cursor. If an incomplete edit
+cannot be parsed, Pinpoint keeps the last valid preview and labels it paused
+until the source is valid again.
 
 Warnings underline malformed brackets, unknown keyed settings, invalid enum
 values, and invalid numeric values. Ctrl+Space offers settings, enumerated
