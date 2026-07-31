@@ -11,6 +11,13 @@ source_test = executable(
 )
 test('source', source_test)
 
+presentation_info_test = executable(
+  'test-presentation-info',
+  'test-presentation-info.c',
+  dependencies: [pinpoint_core_dep],
+)
+test('presentation-info', presentation_info_test)
+
 asset_monitor_test = executable(
   'test-asset-monitor',
   'test-asset-monitor.c',

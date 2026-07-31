@@ -21,6 +21,8 @@ pinpoint_core_sources = files(
   'pp-mpris.h',
   'pp-presentation.c',
   'pp-presentation.h',
+  'pp-presentation-info.c',
+  'pp-presentation-info.h',
   'pp-pdf.c',
   'pp-pdf.h',
   'pp-pdf-async.c',

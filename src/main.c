@@ -8,6 +8,7 @@
 #include "pp-introduction.h"
 #include "pp-mpris.h"
 #include "pp-presentation.h"
+#include "pp-presentation-info.h"
 #include "pp-pdf.h"
 #include "pp-render.h"
 #include "pp-speaker.h"
@@ -1391,67 +1392,19 @@ use_selected_presentation (Pinpoint *pinpoint)
 static gboolean
 update_selected_presentation (Pinpoint *pinpoint)
 {
-  g_autoptr (PpPresentation) presentation = NULL;
-  g_autoptr (GError) error = NULL;
-  g_autofree char *basename = NULL;
-  g_autoptr (GString) details = NULL;
-  guint visual_assets = 0;
-  guint videos = 0;
-  guint notes = 0;
+  g_autoptr (PpPresentationInfo) info = NULL;
 
   if (pinpoint->setup_selected_section == NULL || pinpoint->file == NULL)
     return FALSE;
 
-  basename = g_file_get_basename (pinpoint->file);
+  info = pp_presentation_info_new (pinpoint->file,
+                                   pinpoint->ignore_comments);
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (pinpoint->setup_selected_row),
-                                 basename);
-  presentation = pp_presentation_load (pinpoint->file,
-                                       pinpoint->ignore_comments,
-                                       NULL,
-                                       &error);
-  if (presentation == NULL)
-    {
-      g_autofree char *message = g_strdup_printf ("Cannot open: %s",
-                                                   error->message);
-
-      adw_action_row_set_subtitle (pinpoint->setup_selected_row, message);
-      gtk_widget_set_visible (pinpoint->setup_selected_section, TRUE);
-      return FALSE;
-    }
-
-  details = g_string_new (NULL);
-  g_string_append_printf (details,
-                          "%u %s",
-                          pp_presentation_get_n_slides (presentation),
-                          pp_presentation_get_n_slides (presentation) == 1
-                            ? "slide" : "slides");
-  for (guint i = 0; i < pp_presentation_get_n_slides (presentation); i++)
-    {
-      const PpSlide *slide = pp_presentation_get_slide (presentation, i);
-
-      if (slide->background_type == PP_BACKGROUND_IMAGE ||
-          slide->background_type == PP_BACKGROUND_SVG)
-        visual_assets++;
-      else if (slide->background_type == PP_BACKGROUND_VIDEO)
-        videos++;
-      if (slide->speaker_notes != NULL && slide->speaker_notes[0] != '\0')
-        notes++;
-    }
-  if (visual_assets > 0)
-    g_string_append_printf (details,
-                            " · %u visual %s",
-                            visual_assets,
-                            visual_assets == 1 ? "asset" : "assets");
-  if (videos > 0)
-    g_string_append_printf (details,
-                            " · %u %s",
-                            videos,
-                            videos == 1 ? "video" : "videos");
-  if (notes > 0)
-    g_string_append (details, " · speaker notes");
-  adw_action_row_set_subtitle (pinpoint->setup_selected_row, details->str);
+                                 pp_presentation_info_get_name (info));
+  adw_action_row_set_subtitle (pinpoint->setup_selected_row,
+                               pp_presentation_info_get_details (info));
   gtk_widget_set_visible (pinpoint->setup_selected_section, TRUE);
-  return TRUE;
+  return pp_presentation_info_is_presentable (info);
 }
 
 static void
