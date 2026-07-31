@@ -486,6 +486,63 @@ find_speaker_window (GtkApplication *application)
   return NULL;
 }
 
+typedef struct
+{
+  guint callback_calls;
+  guint destroy_calls;
+  guint n_durations;
+  double durations[4];
+} RehearsalResult;
+
+static void
+rehearsal_finished_cb (const double *durations,
+                       guint         n_durations,
+                       gpointer      user_data)
+{
+  RehearsalResult *result = user_data;
+
+  result->callback_calls++;
+  result->n_durations = n_durations;
+  g_assert_cmpuint (n_durations, <=, G_N_ELEMENTS (result->durations));
+  for (guint i = 0; i < n_durations; i++)
+    result->durations[i] = durations[i];
+}
+
+static void
+rehearsal_result_destroy_cb (gpointer user_data)
+{
+  RehearsalResult *result = user_data;
+
+  result->destroy_calls++;
+}
+
+static GFile *
+create_rehearsal_file (const char *source)
+{
+  g_autoptr (GFileIOStream) stream = NULL;
+  g_autoptr (GError) error = NULL;
+  GFile *file;
+  gsize written = 0;
+
+  file = g_file_new_tmp ("pinpoint-editor-rehearsal-XXXXXX.pin",
+                         &stream,
+                         &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (file);
+  g_assert_true (g_output_stream_write_all (
+    g_io_stream_get_output_stream (G_IO_STREAM (stream)),
+    source,
+    strlen (source),
+    &written,
+    NULL,
+    &error));
+  g_assert_no_error (error);
+  g_assert_cmpuint (written, ==, strlen (source));
+  g_assert_true (g_io_stream_close (G_IO_STREAM (stream), NULL, &error));
+  g_assert_no_error (error);
+  return file;
+}
+
 static void
 test_stage_accessibility (void)
 {
@@ -719,6 +776,81 @@ test_speaker_control_and_repeated_lifecycle (void)
 
   gtk_window_destroy (window);
   run_loop_for (100);
+}
+
+static void
+test_editor_rehearsal_lifecycle (void)
+{
+  static const char source[] = "--\nFirst\n--\nSecond\n";
+  g_autoptr (GtkApplication) application = create_application (
+    "com.nedrichards.pinpoint.LifecycleEditorRehearsalTest");
+  g_autoptr (GFile) file = create_rehearsal_file (source);
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (PpControl) control = pp_control_new (G_ACTION_MAP (application),
+                                                  G_ACTION_GROUP (application));
+  g_autoptr (PpSpeaker) speaker = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autofree char *saved_source = NULL;
+  gsize saved_length = 0;
+  GtkWindow *window = GTK_WINDOW (gtk_application_window_new (application));
+  GtkWidget *stage = pp_stage_new ();
+  RehearsalResult completed = { 0 };
+  RehearsalResult cancelled = { 0 };
+
+  presentation = pp_presentation_load (file, FALSE, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (presentation);
+  pp_stage_set_presentation (PP_STAGE (stage),
+                             g_steal_pointer (&presentation),
+                             0);
+  gtk_window_set_child (window, stage);
+  speaker = pp_speaker_new (application, PP_STAGE (stage), control);
+  gtk_window_present (window);
+  run_loop_for (50);
+
+  pp_speaker_start_rehearsal_for_editor (speaker,
+                                         rehearsal_finished_cb,
+                                         &completed,
+                                         rehearsal_result_destroy_cb);
+  run_loop_for (50);
+  g_assert_true (pp_stage_next (PP_STAGE (stage)));
+  run_loop_for (50);
+  g_assert_false (pp_stage_next (PP_STAGE (stage)));
+  g_assert_cmpuint (completed.callback_calls, ==, 1);
+  g_assert_cmpuint (completed.destroy_calls, ==, 1);
+  g_assert_cmpuint (completed.n_durations, ==, 2);
+  g_assert_cmpfloat (completed.durations[0], >, 0.0);
+  g_assert_cmpfloat (completed.durations[1], >, 0.0);
+  g_assert_true (g_file_load_contents (file,
+                                       NULL,
+                                       &saved_source,
+                                       &saved_length,
+                                       NULL,
+                                       &error));
+  g_assert_no_error (error);
+  g_assert_cmpuint (saved_length, ==, strlen (source));
+  g_assert_cmpstr (saved_source, ==, source);
+
+  pp_speaker_start_rehearsal_for_editor (speaker,
+                                         rehearsal_finished_cb,
+                                         &cancelled,
+                                         rehearsal_result_destroy_cb);
+  run_loop_for (25);
+  pp_speaker_cancel_rehearsal (speaker);
+  pp_speaker_cancel_rehearsal (speaker);
+  g_assert_cmpuint (cancelled.callback_calls, ==, 0);
+  g_assert_cmpuint (cancelled.destroy_calls, ==, 1);
+
+  pp_speaker_start_rehearsal (speaker);
+  run_loop_for (25);
+  pp_speaker_cancel_rehearsal (speaker);
+  g_clear_pointer (&speaker, pp_speaker_free);
+  g_assert_cmpuint (completed.destroy_calls, ==, 1);
+  g_assert_cmpuint (cancelled.destroy_calls, ==, 1);
+  gtk_window_destroy (window);
+  run_loop_for (100);
+  g_assert_true (g_file_delete (file, NULL, &error));
+  g_assert_no_error (error);
 }
 
 static void
@@ -1236,6 +1368,7 @@ main (int   argc,
   test_reduced_motion_disables_transitions ();
   test_speaker_keeps_stage_alive ();
   test_speaker_control_and_repeated_lifecycle ();
+  test_editor_rehearsal_lifecycle ();
   test_replace_presentation_during_transition ();
   test_replace_and_dispose_playing_media ();
   test_dispose_queued_camera_request ();
