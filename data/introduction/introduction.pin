@@ -35,15 +35,14 @@ The current presentation thus far:
  The current presentation thus far:
 #Should break this into smaller bits/slides
 -- [text-align=center] [duration=12.553503]
-You start by writing down the core concepts that you will be talking about. Then sort and format
-them as a pinpoint presentation in a text editor of your choice.
+Start by writing down the core concepts you will talk about. Then sort and format them in
+Pinpoint's composition editor or a plain-text editor of your choice.
 
 If this was a presentation given as a demonstration of pinpoint you would now be trying to read
 this slide as well as pay attention to what is said. Less than ideal.
 
-Pinpoint reloads the presentation when it changes on disk, very useful when you're tuning things
-so keep both pinpoint and your text editor open. And remember, the less text you have, the happier
-your audience will be ;-)
+Pinpoint previews edits as you type and reloads external saves, so you can tune the source beside
+the presentation. And remember, the less text you have, the happier your audience will be ;-)
 
 -- [duration=3.136431]
 Let's use some of the more

@@ -184,8 +184,10 @@ visible shading without changing text placement.
 
 The default-level duration is the target length of the whole presentation in
 minutes. A duration on an individual slide is that slide's planned time in
-seconds. Rehearsal mode replaces per-slide durations with the measured values
-when the presenter advances past the final slide.
+seconds. Standalone rehearsal writes measured per-slide values with a
+source-preserving atomic patch when the presenter advances past the final
+slide, and refuses to overwrite an externally changed deck. Composition-mode
+rehearsal instead applies them to the open buffer as one unsaved, undoable edit.
 
 ### Backgrounds
 
@@ -206,9 +208,9 @@ A portal-provided camera background
 ```
 
 Relative filenames are resolved from the directory containing the `.pin`
-file. In the Flatpak, choose the presentation folder rather than only the file
-so Pinpoint also receives access to sibling images, videos, SVGs, transition
-files, and asset subdirectories.
+file. In the Flatpak, use **Present from Folder…** rather than granting only the
+file so Pinpoint also receives access to sibling images, videos, SVGs,
+transition files, and asset subdirectories.
 
 Background classification follows these rules in order:
 
@@ -397,9 +399,11 @@ that permission to the production Pinpoint manifest.
 Pinpoint monitors the source file and reloads it after changes. It keeps the
 presenter at the first slide whose source changed, making a text editor and the
 presentation window practical side by side. Relative assets are re-resolved
-from the presentation directory. Native installs include a GtkSourceView 5
-language definition for `.pin` files; see [external editor
-support](external-editors.md) for GNOME Text Editor and Flatpak setup.
+from the presentation directory. Pinpoint's built-in [composition
+mode](composition-editor.md) provides the same live renderer with diagnostics,
+completion, safe preview, and integrated rehearsal. Native installs also
+include a GtkSourceView 5 language definition for `.pin` files; see [external
+editor support](external-editors.md) for GNOME Text Editor and Flatpak setup.
 
 ## PDF export
 

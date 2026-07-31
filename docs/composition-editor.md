@@ -7,6 +7,9 @@ with **New Presentation**, **Edit** on a selected deck, or:
 pinpoint --edit talk.pin
 ```
 
+Opening the bundled introduction in the editor first creates an editable copy,
+so the immutable installed example is never modified in place.
+
 It is intentionally smaller than Builder, but opens at a practical composition
 size. One window owns one deck: a compact slide outline, GtkSourceView source
 buffer, presentation-quality preview, and the actions needed to save, present,
@@ -30,7 +33,8 @@ until the source is valid again.
 Warnings underline malformed brackets, unknown keyed settings, invalid enum
 values, and invalid numeric values. Ctrl+Space offers settings, enumerated
 values, files beside the presentation, slide separators, speaker notes, and
-visual-description directives. The status line summarizes slides and problems;
+visual-description directives. File completion becomes available after the
+deck has a saved location. The status line summarizes slides and problems;
 hover it for the first diagnostic.
 
 Syntax colour reinforces the format without turning slide prose into code:

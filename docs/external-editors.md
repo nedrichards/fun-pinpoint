@@ -113,7 +113,8 @@ The Meson suite validates the XML against GtkSourceView 5's `language2.rng`
 schema when the SDK provides it. A separate test loads the definition through
 `GtkSourceLanguageManager`, checks MIME and filename discovery, and verifies
 the expected context classes against `tests/fixtures/editor-highlighting.pin`,
-including the `#@alt:` visual-description directive.
+including the `#@alt:` visual-description directive. Editor tests also load the
+bundled light and dark Pinpoint style schemes and verify their key colours.
 
 The complete syntax and live-editing behaviour are documented in the
 [presentation format reference](presentation-format.md).

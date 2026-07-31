@@ -15,7 +15,8 @@ stale counters, and builds in the SDK. It then executes the parser, rendering,
 display-selection, presentation-control, performance, pixel-profile, lifecycle,
 and whole-application tests directly on the host while resolving their
 libraries and GStreamer helpers from that exact SDK commit and its automatically
-installed codec extension. It also resolves
+installed codec extension. Source-analysis and editor behavior are exercised by
+the same gate when their optional dependencies are enabled. It also resolves
 the active EGL, DRI, GBM, and Vulkan paths from the Flatpak GL extension version
 declared by the SDK. A missing extension or failed OpenGL 3.3 page-curl context
 is a test failure, not a skip or software fallback.

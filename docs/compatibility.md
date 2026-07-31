@@ -15,6 +15,9 @@ fixes.
 - Fit, fill, stretch, unscaled, and background alignment geometry
 - Relative presentation assets
 - Live source monitoring and first-changed-slide selection
+- Optional source-first composition mode using the production parser and
+  renderer, with explicit saves, diagnostics, completion, safe preview, and
+  integrated rehearsal. External-editor workflows remain supported.
 - Keyboard and mouse navigation, blanking, fullscreen, and idle cursor hiding
 - Built-in fade, slide, text-slide, spin, sheet, and swing transition families
 - Composable native slide, zoom, fade, spin, and 3D flip transitions with
@@ -47,7 +50,9 @@ fixes.
   presenter/audience monitor selection, single-monitor fallback, and display
   hotplug handling, plus a speaker-toolbar action that swaps the active pair
   while leaving any additional displays untouched
-- Rehearsal timing accumulation and atomic serialization back to the source
+- Rehearsal timing accumulation with source-preserving atomic duration patches
+  and external-change rejection. Composition mode applies timings to the open
+  buffer as an unsaved, undoable edit.
 - Original command-line option names and short forms, with Ctrl+C rehearsal
   abort semantics retained. Additive version/check and PDF controls do not
   alter valid 0.1.8 presentation invocations.
