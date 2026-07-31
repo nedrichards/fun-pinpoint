@@ -70,13 +70,6 @@
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title">Validate the selected presentation</property>
-                <property name="action-name">win.validate-selected</property>
-                <property name="accelerator">&lt;Primary&gt;&lt;Shift&gt;v</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
                 <property name="title">Export the selected presentation to PDF</property>
                 <property name="action-name">win.export-selected</property>
                 <property name="accelerator">&lt;Primary&gt;e</property>

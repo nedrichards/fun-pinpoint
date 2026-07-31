@@ -110,9 +110,10 @@ static void open_presentation_folder_dialog (Pinpoint *pinpoint);
 static void start_monitor (Pinpoint *pinpoint);
 static void hide_end_presentation_control (Pinpoint *pinpoint);
 static void reveal_end_presentation_control (Pinpoint *pinpoint);
-static void update_selected_presentation (Pinpoint *pinpoint);
+static gboolean update_selected_presentation (Pinpoint *pinpoint);
 static void set_selected_actions_enabled (Pinpoint *pinpoint,
-                                          gboolean  enabled);
+                                          gboolean  selected,
+                                          gboolean  presentable);
 static void view_bundled_introduction (Pinpoint *pinpoint);
 static gboolean show_editor (Pinpoint *pinpoint,
                              GFile    *file);
@@ -1383,11 +1384,11 @@ use_selected_presentation (Pinpoint *pinpoint)
       set_window_title (pinpoint);
       if (pinpoint->setup_selected_section != NULL)
         gtk_widget_set_visible (pinpoint->setup_selected_section, FALSE);
-      set_selected_actions_enabled (pinpoint, FALSE);
+      set_selected_actions_enabled (pinpoint, FALSE, FALSE);
     }
 }
 
-static void
+static gboolean
 update_selected_presentation (Pinpoint *pinpoint)
 {
   g_autoptr (PpPresentation) presentation = NULL;
@@ -1399,7 +1400,7 @@ update_selected_presentation (Pinpoint *pinpoint)
   guint notes = 0;
 
   if (pinpoint->setup_selected_section == NULL || pinpoint->file == NULL)
-    return;
+    return FALSE;
 
   basename = g_file_get_basename (pinpoint->file);
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (pinpoint->setup_selected_row),
@@ -1410,10 +1411,12 @@ update_selected_presentation (Pinpoint *pinpoint)
                                        &error);
   if (presentation == NULL)
     {
-      adw_action_row_set_subtitle (pinpoint->setup_selected_row,
-                                   "Select Validate to see why this deck cannot be opened");
+      g_autofree char *message = g_strdup_printf ("Cannot open: %s",
+                                                   error->message);
+
+      adw_action_row_set_subtitle (pinpoint->setup_selected_row, message);
       gtk_widget_set_visible (pinpoint->setup_selected_section, TRUE);
-      return;
+      return FALSE;
     }
 
   details = g_string_new (NULL);
@@ -1448,12 +1451,15 @@ update_selected_presentation (Pinpoint *pinpoint)
     g_string_append (details, " · speaker notes");
   adw_action_row_set_subtitle (pinpoint->setup_selected_row, details->str);
   gtk_widget_set_visible (pinpoint->setup_selected_section, TRUE);
+  return TRUE;
 }
 
 static void
 select_presentation (Pinpoint *pinpoint,
                      GFile    *file)
 {
+  gboolean presentable;
+
   pinpoint->bundled_read_only = FALSE;
   pinpoint->exporting_pdf = FALSE;
   g_set_object (&pinpoint->file, file);
@@ -1461,29 +1467,32 @@ select_presentation (Pinpoint *pinpoint,
     g_settings_set_boolean (pinpoint->settings, "welcome-complete", TRUE);
   if (pinpoint->welcome_banner != NULL)
     adw_banner_set_revealed (pinpoint->welcome_banner, FALSE);
-  update_selected_presentation (pinpoint);
-  set_selected_actions_enabled (pinpoint, TRUE);
+  presentable = update_selected_presentation (pinpoint);
+  set_selected_actions_enabled (pinpoint, TRUE, presentable);
 }
 
 static void
 set_selected_actions_enabled (Pinpoint *pinpoint,
-                              gboolean  enabled)
+                              gboolean  selected,
+                              gboolean  presentable)
 {
-  static const char *actions[] = {
-    "edit-selected",
+  static const char *presentable_actions[] = {
     "present-selected",
     "rehearse-selected",
-    "validate-selected",
     "export-selected",
   };
+  GAction *edit_action = g_action_map_lookup_action (
+    G_ACTION_MAP (pinpoint->window), "edit-selected");
 
-  for (guint i = 0; i < G_N_ELEMENTS (actions); i++)
+  if (G_IS_SIMPLE_ACTION (edit_action))
+    g_simple_action_set_enabled (G_SIMPLE_ACTION (edit_action), selected);
+  for (guint i = 0; i < G_N_ELEMENTS (presentable_actions); i++)
     {
       GAction *action = g_action_map_lookup_action (
-        G_ACTION_MAP (pinpoint->window), actions[i]);
+        G_ACTION_MAP (pinpoint->window), presentable_actions[i]);
 
       if (G_IS_SIMPLE_ACTION (action))
-        g_simple_action_set_enabled (G_SIMPLE_ACTION (action), enabled);
+        g_simple_action_set_enabled (G_SIMPLE_ACTION (action), presentable);
     }
 }
 
@@ -1702,42 +1711,6 @@ export_selected_clicked_cb (GtkButton *button,
   pinpoint->ignore_comments =
     adw_switch_row_get_active (pinpoint->setup_ignore_comments);
   export_selected_presentation (pinpoint);
-}
-
-static void
-validate_selected_clicked_cb (GtkButton *button,
-                              gpointer   user_data)
-{
-  Pinpoint *pinpoint = user_data;
-  g_autoptr (GError) error = NULL;
-  g_autofree char *basename = g_file_get_basename (pinpoint->file);
-  g_autofree char *body = NULL;
-  guint n_slides;
-  AdwAlertDialog *dialog;
-
-  (void) button;
-  pinpoint->ignore_comments =
-    adw_switch_row_get_active (pinpoint->setup_ignore_comments);
-  if (validate_presentation (pinpoint, &n_slides, &error))
-    {
-      body = g_strdup_printf ("%s is valid and has %u %s.",
-                              basename,
-                              n_slides,
-                              n_slides == 1 ? "slide" : "slides");
-      dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new ("Presentation Is Valid",
-                                                       body));
-    }
-  else
-    {
-      body = g_strdup_printf ("%s cannot be presented yet:\n%s",
-                              basename,
-                              error->message);
-      dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new ("Validation Failed",
-                                                       body));
-    }
-  adw_alert_dialog_add_response (dialog, "close", "Close");
-  adw_alert_dialog_set_close_response (dialog, "close");
-  adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (pinpoint->window));
 }
 
 static void
@@ -2113,16 +2086,6 @@ rehearse_selected_action_cb (GSimpleAction *action,
 }
 
 static void
-validate_selected_action_cb (GSimpleAction *action,
-                             GVariant      *parameter,
-                             gpointer       user_data)
-{
-  (void) action;
-  (void) parameter;
-  validate_selected_clicked_cb (NULL, user_data);
-}
-
-static void
 export_selected_action_cb (GSimpleAction *action,
                            GVariant      *parameter,
                            gpointer       user_data)
@@ -2234,7 +2197,6 @@ create_setup_view (Pinpoint *pinpoint)
     { .name = "present-selected", .activate = present_selected_action_cb },
     { .name = "edit-selected", .activate = edit_selected_action_cb },
     { .name = "rehearse-selected", .activate = rehearse_selected_action_cb },
-    { .name = "validate-selected", .activate = validate_selected_action_cb },
     { .name = "export-selected", .activate = export_selected_action_cb },
     { .name = "show-shortcuts", .activate = show_shortcuts_action_cb },
     { .name = "open-documentation", .parameter_type = "s",
@@ -2272,11 +2234,17 @@ create_setup_view (Pinpoint *pinpoint)
   GtkWidget *selected_section = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
   GtkWidget *selected_group = adw_preferences_group_new ();
   GtkWidget *selected_actions = gtk_flow_box_new ();
-  GtkWidget *edit = gtk_button_new_with_label ("Edit");
+  GtkWidget *selected_file_actions = adw_preferences_group_new ();
   GtkWidget *present = gtk_button_new_with_label ("Present");
   GtkWidget *rehearse = gtk_button_new_with_label ("Rehearse");
-  GtkWidget *validate = gtk_button_new_with_label ("Validate");
-  GtkWidget *export = gtk_button_new_with_label ("Export PDF…");
+  GtkWidget *edit_row = adw_action_row_new ();
+  GtkWidget *edit_icon = gtk_image_new_from_icon_name (
+    "document-edit-symbolic");
+  GtkWidget *edit = gtk_button_new_from_icon_name ("go-next-symbolic");
+  GtkWidget *export_row = adw_action_row_new ();
+  GtkWidget *export_icon = gtk_image_new_from_icon_name (
+    "document-save-symbolic");
+  GtkWidget *export = gtk_button_new_from_icon_name ("go-next-symbolic");
   GtkExpression *expression;
 
   g_action_map_add_action_entries (G_ACTION_MAP (pinpoint->window),
@@ -2375,42 +2343,68 @@ create_setup_view (Pinpoint *pinpoint)
                                    GTK_SELECTION_NONE);
   gtk_flow_box_set_homogeneous (GTK_FLOW_BOX (selected_actions), TRUE);
   gtk_flow_box_set_min_children_per_line (GTK_FLOW_BOX (selected_actions), 1);
-  gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (selected_actions), 3);
+  gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (selected_actions), 2);
   gtk_flow_box_set_column_spacing (GTK_FLOW_BOX (selected_actions), 6);
   gtk_flow_box_set_row_spacing (GTK_FLOW_BOX (selected_actions), 6);
   gtk_widget_set_hexpand (selected_actions, TRUE);
-  gtk_widget_add_css_class (present, "suggested-action");
   gtk_widget_add_css_class (present, "pill");
   gtk_widget_add_css_class (rehearse, "pill");
-  gtk_widget_add_css_class (validate, "flat");
-  gtk_widget_add_css_class (export, "flat");
-  gtk_widget_add_css_class (edit, "pill");
-  gtk_actionable_set_action_name (GTK_ACTIONABLE (edit),
-                                  "win.edit-selected");
   gtk_actionable_set_action_name (GTK_ACTIONABLE (present),
                                   "win.present-selected");
   gtk_actionable_set_action_name (GTK_ACTIONABLE (rehearse),
                                   "win.rehearse-selected");
-  gtk_actionable_set_action_name (GTK_ACTIONABLE (validate),
-                                  "win.validate-selected");
-  gtk_actionable_set_action_name (GTK_ACTIONABLE (export),
-                                  "win.export-selected");
-  gtk_widget_set_hexpand (edit, TRUE);
   gtk_widget_set_hexpand (present, TRUE);
   gtk_widget_set_hexpand (rehearse, TRUE);
-  gtk_widget_set_hexpand (validate, TRUE);
-  gtk_widget_set_hexpand (export, TRUE);
-  gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), edit, -1);
   gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), present, -1);
   gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), rehearse, -1);
-  gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), validate, -1);
-  gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), export, -1);
+
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (edit_row),
+                                 "Edit Presentation");
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (edit_row),
+                               "Open the source and live preview");
+  gtk_widget_add_css_class (edit_icon, "dim-label");
+  adw_action_row_add_prefix (ADW_ACTION_ROW (edit_row), edit_icon);
+  gtk_widget_add_css_class (edit, "flat");
+  gtk_widget_set_valign (edit, GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text (edit, "Edit Presentation");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (edit),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Edit Presentation",
+                                  -1);
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (edit),
+                                  "win.edit-selected");
+  adw_action_row_add_suffix (ADW_ACTION_ROW (edit_row), edit);
+  adw_action_row_set_activatable_widget (ADW_ACTION_ROW (edit_row), edit);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (selected_file_actions),
+                             edit_row);
+
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (export_row),
+                                 "Export as PDF");
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (export_row),
+                               "Create a portable copy of this presentation");
+  gtk_widget_add_css_class (export_icon, "dim-label");
+  adw_action_row_add_prefix (ADW_ACTION_ROW (export_row), export_icon);
+  gtk_widget_add_css_class (export, "flat");
+  gtk_widget_set_valign (export, GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text (export, "Export as PDF");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (export),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Export as PDF",
+                                  -1);
+  gtk_actionable_set_action_name (GTK_ACTIONABLE (export),
+                                  "win.export-selected");
+  adw_action_row_add_suffix (ADW_ACTION_ROW (export_row), export);
+  adw_action_row_set_activatable_widget (ADW_ACTION_ROW (export_row), export);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (selected_file_actions),
+                             export_row);
+
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (selected_group),
                              GTK_WIDGET (pinpoint->setup_selected_row));
   gtk_box_append (GTK_BOX (selected_section), selected_group);
   gtk_box_append (GTK_BOX (selected_section), selected_actions);
+  gtk_box_append (GTK_BOX (selected_section), selected_file_actions);
   gtk_box_append (GTK_BOX (content), selected_section);
-  set_selected_actions_enabled (pinpoint, FALSE);
+  set_selected_actions_enabled (pinpoint, FALSE, FALSE);
 
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (learn_group),
                                    "Need a Starting Point?");
@@ -3267,9 +3261,6 @@ activate_cb (GtkApplication *application,
   gtk_application_set_accels_for_action (application,
                                          "win.rehearse-selected",
                                          (const char *[]) { "<Primary><Shift>r", NULL });
-  gtk_application_set_accels_for_action (application,
-                                         "win.validate-selected",
-                                         (const char *[]) { "<Primary><Shift>v", NULL });
   gtk_application_set_accels_for_action (application,
                                          "win.export-selected",
                                          (const char *[]) { "<Primary>e", NULL });
