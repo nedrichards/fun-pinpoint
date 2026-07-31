@@ -3,11 +3,17 @@
 #include <glib/gstdio.h>
 #include <gmodule.h>
 #include <gtksourceview/gtksource.h>
+#include <string.h>
 
 typedef struct
 {
   guint close_count;
   gboolean close_quit;
+  guint launch_count;
+  char *launch_source;
+  GFile *launch_file;
+  guint launch_slide;
+  gboolean launch_rehearsal;
 } HostState;
 
 static void
@@ -159,6 +165,23 @@ close_editor_cb (gboolean quit,
   state->close_quit = quit;
 }
 
+static void
+launch_editor_cb (const char *source,
+                  GFile      *file,
+                  guint       initial_slide,
+                  gboolean    rehearse,
+                  gpointer    user_data)
+{
+  HostState *state = user_data;
+
+  state->launch_count++;
+  g_free (state->launch_source);
+  state->launch_source = g_strdup (source);
+  g_set_object (&state->launch_file, file);
+  state->launch_slide = initial_slide;
+  state->launch_rehearsal = rehearse;
+}
+
 static gboolean
 wait_for_close_count (HostState *state,
                       guint      expected)
@@ -192,6 +215,56 @@ find_source_view (GtkWidget *widget)
         return view;
     }
   return NULL;
+}
+
+static GtkPopover *
+find_popover (GtkWidget *widget)
+{
+  if (GTK_IS_POPOVER (widget))
+    return GTK_POPOVER (widget);
+
+  for (GtkWidget *child = gtk_widget_get_first_child (widget);
+       child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    {
+      GtkPopover *popover = find_popover (child);
+
+      if (popover != NULL)
+        return popover;
+    }
+  return NULL;
+}
+
+static GtkEventControllerKey *
+find_key_controller (GtkWidget *widget)
+{
+  g_autoptr (GListModel) controllers = gtk_widget_observe_controllers (widget);
+
+  for (guint i = 0; i < g_list_model_get_n_items (controllers); i++)
+    {
+      g_autoptr (GtkEventController) controller =
+        g_list_model_get_item (controllers, i);
+
+      if (GTK_IS_EVENT_CONTROLLER_KEY (controller))
+        return GTK_EVENT_CONTROLLER_KEY (g_steal_pointer (&controller));
+    }
+  return NULL;
+}
+
+static gboolean
+emit_key (GtkEventControllerKey *controller,
+          guint                  keyval,
+          GdkModifierType        state)
+{
+  gboolean handled = FALSE;
+
+  g_signal_emit_by_name (controller,
+                         "key-pressed",
+                         keyval,
+                         0,
+                         state,
+                         &handled);
+  return handled;
 }
 
 static GtkListBox *
@@ -412,6 +485,117 @@ assert_close_and_durations (PpEditorModuleCreateFunc         create_editor,
   run_loop_for (50);
 }
 
+static void
+assert_completion_and_shortcuts (PpEditorModuleCreateFunc create_editor,
+                                 PpEditorHost             *host,
+                                 HostState                *state)
+{
+  static const char initial[] = "--\nSlide\n";
+  static const char two_slides[] = "--\nFirst\n--\nSecond\n";
+  g_autoptr (GError) error = NULL;
+  g_autofree char *directory = g_dir_make_tmp ("pinpoint-editor-XXXXXX", &error);
+  g_autofree char *path = NULL;
+  g_autofree char *asset_path = NULL;
+  g_autofree char *other_pin_path = NULL;
+  g_autoptr (GFile) file = NULL;
+  GtkWindow *window = GTK_WINDOW (gtk_window_new ());
+  GtkWidget *editor;
+  GtkSourceView *view;
+  GtkTextBuffer *buffer;
+  GtkTextIter iter;
+  GtkPopover *popover;
+  GtkEventControllerKey *keys = NULL;
+  GtkWidget *button;
+  GtkWidget *focus;
+  GtkListBox *outline;
+  g_autofree char *updated = NULL;
+
+  g_assert_no_error (error);
+  path = g_build_filename (directory, "completion.pin", NULL);
+  asset_path = g_build_filename (directory, "visual.png", NULL);
+  other_pin_path = g_build_filename (directory, "other.pin", NULL);
+  g_assert_true (g_file_set_contents (path, initial, -1, &error));
+  g_assert_no_error (error);
+  g_assert_true (g_file_set_contents (asset_path, "asset", -1, &error));
+  g_assert_no_error (error);
+  g_assert_true (g_file_set_contents (other_pin_path, initial, -1, &error));
+  g_assert_no_error (error);
+  file = g_file_new_for_path (path);
+  editor = create_editor (host, file);
+  g_assert_nonnull (editor);
+  gtk_window_set_child (window, editor);
+  gtk_window_present (window);
+  run_loop_for (250);
+
+  view = find_source_view (editor);
+  g_assert_nonnull (view);
+  buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+  popover = find_popover (editor);
+  g_assert_nonnull (popover);
+  keys = find_key_controller (GTK_WIDGET (view));
+  g_assert_nonnull (keys);
+  outline = find_outline (editor);
+  g_assert_nonnull (outline);
+
+  gtk_text_buffer_get_end_iter (buffer, &iter);
+  gtk_text_buffer_place_cursor (buffer, &iter);
+  g_assert_true (emit_key (keys, GDK_KEY_space, GDK_CONTROL_MASK));
+  run_loop_for (50);
+  g_assert_true (gtk_widget_get_visible (GTK_WIDGET (popover)));
+  g_assert_nonnull (find_button (GTK_WIDGET (popover), "text-align=center"));
+  g_assert_nonnull (find_button (GTK_WIDGET (popover), "Asset: visual.png"));
+  g_assert_null (find_button (GTK_WIDGET (popover), "Asset: other.pin"));
+  button = find_button (GTK_WIDGET (popover), "duration=");
+  g_assert_nonnull (button);
+  g_signal_emit_by_name (button, "clicked");
+  updated = get_buffer_text (buffer);
+  g_assert_cmpstr (updated, ==, "--\nSlide\n[duration=]");
+  gtk_text_buffer_get_iter_at_mark (buffer,
+                                    &iter,
+                                    gtk_text_buffer_get_insert (buffer));
+  g_assert_cmpint (gtk_text_iter_get_offset (&iter), ==,
+                   (int) strlen (updated) - 1);
+
+  gtk_text_buffer_set_text (buffer, two_slides, -1);
+  gtk_text_buffer_get_end_iter (buffer, &iter);
+  gtk_text_buffer_place_cursor (buffer, &iter);
+  run_loop_for (300);
+  g_assert_true (emit_key (keys, GDK_KEY_Return, GDK_CONTROL_MASK));
+  g_assert_cmpuint (state->launch_count, ==, 1);
+  g_assert_cmpstr (state->launch_source, ==, two_slides);
+  g_assert_true (g_file_equal (state->launch_file, file));
+  g_assert_cmpuint (state->launch_slide, ==, 1);
+  g_assert_false (state->launch_rehearsal);
+  g_assert_true (emit_key (keys,
+                           GDK_KEY_R,
+                           GDK_CONTROL_MASK | GDK_SHIFT_MASK));
+  g_assert_cmpuint (state->launch_count, ==, 2);
+  g_assert_cmpuint (state->launch_slide, ==, 0);
+  g_assert_true (state->launch_rehearsal);
+
+  g_assert_true (gtk_widget_grab_focus (GTK_WIDGET (view)));
+  g_assert_true (emit_key (keys, GDK_KEY_F6, 0));
+  focus = gtk_root_get_focus (GTK_ROOT (window));
+  g_assert_true (focus != GTK_WIDGET (view));
+  g_assert_true (emit_key (keys, GDK_KEY_F6, 0));
+  focus = gtk_root_get_focus (GTK_ROOT (window));
+  g_assert_true (focus == GTK_WIDGET (outline) ||
+                 gtk_widget_is_ancestor (focus, GTK_WIDGET (outline)));
+  g_assert_true (emit_key (keys, GDK_KEY_F6, 0));
+  g_assert_true (gtk_root_get_focus (GTK_ROOT (window)) == GTK_WIDGET (view));
+  g_assert_false (emit_key (keys, GDK_KEY_x, 0));
+
+  gtk_window_destroy (window);
+  run_loop_for (50);
+  g_clear_object (&keys);
+  g_clear_pointer (&state->launch_source, g_free);
+  g_clear_object (&state->launch_file);
+  g_assert_cmpint (g_remove (path), ==, 0);
+  g_assert_cmpint (g_remove (asset_path), ==, 0);
+  g_assert_cmpint (g_remove (other_pin_path), ==, 0);
+  g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -452,6 +636,7 @@ main (int   argc,
   host = (PpEditorHost) {
     .abi_version = PP_EDITOR_MODULE_ABI,
     .application = application,
+    .launch = launch_editor_cb,
     .close = close_editor_cb,
     .user_data = &state,
   };
@@ -464,6 +649,7 @@ main (int   argc,
                               request_close,
                               &host,
                               &state);
+  assert_completion_and_shortcuts (create_editor, &host, &state);
 
   return 0;
 }

@@ -82,6 +82,55 @@ test_duration_count_mismatch (void)
   g_assert_error (error, PP_PRESENTATION_ERROR, PP_PRESENTATION_ERROR_INVALID);
 }
 
+static void
+assert_values (const char         *setting,
+               const char *const *expected)
+{
+  const char *const *values = pp_source_setting_values (setting);
+  guint i;
+
+  g_assert_nonnull (values);
+  for (i = 0; expected[i] != NULL; i++)
+    g_assert_cmpstr (values[i], ==, expected[i]);
+  g_assert_null (values[i]);
+}
+
+static void
+test_completion_catalogue (void)
+{
+  static const char *const align[] = { "left", "center", "right", NULL };
+  static const char *const gravity[] = {
+    "center", "top-left", "left", "bottom-left", "top-right", "right",
+    "bottom-right", NULL
+  };
+  static const char *const direction[] = { "left", "right", "up", "down", NULL };
+  static const char *const layer[] = { "default", "all", "background", "text", NULL };
+  static const char *const mode[] = { "both", "in", "out", NULL };
+  static const char *const easing[] = {
+    "linear", "ease-in", "ease-out", "ease-in-out", NULL
+  };
+  const char *const *names = pp_source_setting_names ();
+  gboolean found_duration = FALSE;
+  gboolean found_new_markup = FALSE;
+
+  g_assert_nonnull (names);
+  for (guint i = 0; names[i] != NULL; i++)
+    {
+      found_duration |= g_str_equal (names[i], "duration=");
+      found_new_markup |= g_str_equal (names[i], "markup");
+    }
+  g_assert_true (found_duration);
+  g_assert_true (found_new_markup);
+  assert_values ("text-align=", align);
+  assert_values ("bg-position=", gravity);
+  assert_values ("transition-direction=", direction);
+  assert_values ("transition-layer=", layer);
+  assert_values ("transition-mode=", mode);
+  assert_values ("transition-easing=", easing);
+  g_assert_null (pp_source_setting_values ("duration="));
+  g_assert_null (pp_source_setting_values ("fill"));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -91,5 +140,6 @@ main (int   argc,
   g_test_add_func ("/source/incomplete", test_incomplete_source);
   g_test_add_func ("/source/apply-durations", test_apply_durations_preserves_source);
   g_test_add_func ("/source/duration-count", test_duration_count_mismatch);
+  g_test_add_func ("/source/completion-catalogue", test_completion_catalogue);
   return g_test_run ();
 }

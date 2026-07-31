@@ -1061,8 +1061,9 @@ editor_key_pressed_cb (GtkEventControllerKey *controller,
 
       if (focus == GTK_WIDGET (self->source_view))
         gtk_widget_grab_focus (GTK_WIDGET (self->preview));
-      else if (focus != NULL &&
-               gtk_widget_is_ancestor (focus, GTK_WIDGET (self->outline)))
+      else if (focus == GTK_WIDGET (self->outline) ||
+               (focus != NULL &&
+                gtk_widget_is_ancestor (focus, GTK_WIDGET (self->outline))))
         gtk_widget_grab_focus (GTK_WIDGET (self->source_view));
       else
         gtk_widget_grab_focus (GTK_WIDGET (self->outline));
