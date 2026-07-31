@@ -71,11 +71,13 @@ reference is [docs/presentation-format.md](docs/presentation-format.md).
 | `S` in speaker view | Swap audience and speaker displays |
 | Escape or `Q` | Return to the editor, or quit Pinpoint |
 
-Touchscreen taps and horizontal swipes navigate slides. Standard MPRIS clients
-can use Next and Previous; Pinpoint deliberately rejects media playback, seek,
-and volume operations because they do not truthfully describe a presentation.
-Speaker view can run in another window or on a second monitor and shows the
-current slide, next slide, notes, and timing information.
+Touchscreen taps advance slides and briefly reveal the presentation's close
+control. Pointer movement reveals the same control without advancing, while
+horizontal swipes navigate slides. Standard MPRIS clients can use Next and
+Previous; Pinpoint deliberately rejects media playback, seek, and volume
+operations because they do not truthfully describe a presentation. Speaker
+view can run in another window or on a second monitor and shows the current
+slide, next slide, notes, and timing information.
 
 ## Command line
 
