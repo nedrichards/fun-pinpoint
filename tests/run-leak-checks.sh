@@ -47,6 +47,7 @@ export G_SLICE=${G_SLICE:-always-malloc}
 
 "$build_dir/tests/test-parser" "$root/tests/fixtures/compatibility.pin"
 "$build_dir/tests/test-source"
+"$build_dir/tests/test-presentation-info"
 "$build_dir/tests/test-asset-monitor"
 "$build_dir/tests/test-display-selection"
 "$build_dir/tests/test-control"

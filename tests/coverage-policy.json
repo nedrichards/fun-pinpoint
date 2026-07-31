@@ -85,6 +85,11 @@
       "uncovered_functions": 5,
       "uncovered_lines": 196
     },
+    "src/pp-presentation-info.c": {
+      "uncovered_branches": 13,
+      "uncovered_functions": 0,
+      "uncovered_lines": 0
+    },
     "src/pp-pdf-async.c": {
       "uncovered_branches": 30,
       "uncovered_functions": 0,

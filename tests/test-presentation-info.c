@@ -90,6 +90,7 @@ test_invalid_presentation (void)
   g_assert_true (g_str_has_prefix (pp_presentation_info_get_details (info),
                                    "Cannot open: "));
   g_assert_false (pp_presentation_info_is_presentable (info));
+  pp_presentation_info_free (NULL);
   g_assert_cmpint (g_rmdir (directory), ==, 0);
 }
 
