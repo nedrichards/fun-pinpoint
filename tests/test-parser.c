@@ -1537,6 +1537,69 @@ test_video_thumbnail (void)
 }
 
 static void
+test_video_thumbnail_failure (void)
+{
+  g_autofree char *fixtures = g_path_get_dirname (fixture_path);
+  g_autofree char *path = g_build_filename (fixtures,
+                                            "media-formats",
+                                            "corrupt.mp4",
+                                            NULL);
+  g_autoptr (GFile) file = g_file_new_for_path (path);
+  g_autoptr (GdkPixbuf) thumbnail = NULL;
+  g_autoptr (GError) error = NULL;
+
+  g_assert_true (g_file_query_exists (file, NULL));
+  thumbnail = pp_video_thumbnail_new (file, NULL, &error);
+  g_assert_null (thumbnail);
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_FAILED);
+  g_assert_nonnull (error->message);
+  g_assert_cmpuint (strlen (error->message), >, 0);
+}
+
+static void
+test_pdf_corrupt_video_fallback (void)
+{
+  static const char source[] =
+    "-- [media-formats/corrupt.mp4]\nBroken video\n"
+    "-- [media-formats/corrupt.mp4]\nSame broken video\n";
+  g_autoptr (GFile) presentation_file = g_file_new_for_path (fixture_path);
+  g_autoptr (PpPresentation) presentation = NULL;
+  g_autoptr (GFileIOStream) stream = NULL;
+  g_autoptr (GFile) output = NULL;
+  g_autoptr (GFileInfo) info = NULL;
+  g_autoptr (GError) error = NULL;
+  GLogLevelFlags previous_fatal_mask;
+
+  presentation = pp_presentation_parse (source,
+                                        presentation_file,
+                                        FALSE,
+                                        &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (presentation);
+  output = g_file_new_tmp ("pinpoint-corrupt-video-pdf-XXXXXX",
+                           &stream,
+                           &error);
+  g_assert_no_error (error);
+  g_assert_true (g_io_stream_close (G_IO_STREAM (stream), NULL, &error));
+  g_assert_no_error (error);
+  g_clear_object (&stream);
+
+  previous_fatal_mask = g_log_set_always_fatal (G_LOG_FATAL_MASK);
+  g_assert_true (pp_pdf_export (presentation, output, &error));
+  g_log_set_always_fatal (previous_fatal_mask);
+  g_assert_no_error (error);
+  info = g_file_query_info (output,
+                            G_FILE_ATTRIBUTE_STANDARD_SIZE,
+                            G_FILE_QUERY_INFO_NONE,
+                            NULL,
+                            &error);
+  g_assert_no_error (error);
+  g_assert_cmpuint (g_file_info_get_size (info), >, 0);
+  g_assert_true (g_file_delete (output, NULL, &error));
+  g_assert_no_error (error);
+}
+
+static void
 test_legacy_transition (void)
 {
   g_autofree char *fixtures = g_path_get_dirname (fixture_path);
@@ -1896,6 +1959,10 @@ main (int   argc,
   g_test_add_func ("/render/video-thumbnail-scoring",
                    test_video_thumbnail_scoring);
   g_test_add_func ("/render/video-thumbnail", test_video_thumbnail);
+  g_test_add_func ("/render/video-thumbnail-failure",
+                   test_video_thumbnail_failure);
+  g_test_add_func ("/render/pdf-corrupt-video-fallback",
+                   test_pdf_corrupt_video_fallback);
   g_test_add_func ("/render/legacy-transition", test_legacy_transition);
   g_test_add_func ("/render/legacy-transition-validation",
                    test_legacy_transition_validation);
