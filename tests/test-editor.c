@@ -351,9 +351,13 @@ assert_reparse_preserves_cursor (PpEditorModuleCreateFunc create_editor,
   outline_adjustment = gtk_scrolled_window_get_vadjustment (outline_scroll);
   g_assert_cmpfloat (gtk_adjustment_get_value (outline_adjustment), >, 0.0);
 
-  gtk_list_box_select_row (outline,
-                           gtk_list_box_get_row_at_index (outline, 0));
+  g_assert_true (gtk_widget_activate (GTK_WIDGET (
+    gtk_list_box_get_row_at_index (outline, 0))));
   run_loop_for (100);
+  g_assert_cmpint (gtk_list_box_row_get_index (
+                     gtk_list_box_get_selected_row (outline)),
+                   ==,
+                   0);
   gtk_text_buffer_get_iter_at_mark (buffer,
                                     &insert,
                                     gtk_text_buffer_get_insert (buffer));
@@ -361,6 +365,7 @@ assert_reparse_preserves_cursor (PpEditorModuleCreateFunc create_editor,
   g_assert_cmpint (gtk_text_iter_get_line_offset (&insert), ==, 0);
   source_adjustment = gtk_scrollable_get_vadjustment (GTK_SCROLLABLE (view));
   g_assert_cmpfloat (gtk_adjustment_get_value (source_adjustment), ==, 0.0);
+  g_assert_true (gtk_root_get_focus (GTK_ROOT (window)) == GTK_WIDGET (view));
 
   gtk_window_destroy (window);
   run_loop_for (50);

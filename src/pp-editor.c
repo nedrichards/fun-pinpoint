@@ -653,6 +653,13 @@ set_preview_slide_if_available (PpEditor *self,
     pp_stage_set_slide (self->preview, index);
 }
 
+static gboolean
+grab_source_focus_cb (gpointer user_data)
+{
+  gtk_widget_grab_focus (user_data);
+  return G_SOURCE_REMOVE;
+}
+
 static void
 outline_selected_cb (GtkListBox    *outline,
                      GtkListBoxRow *row,
@@ -687,7 +694,10 @@ outline_selected_cb (GtkListBox    *outline,
                                 &iter, 0.15, FALSE, 0.0, 0.0);
   set_preview_slide_if_available (self, index);
   self->syncing_slide = FALSE;
-  gtk_widget_grab_focus (GTK_WIDGET (self->source_view));
+  g_idle_add_full (G_PRIORITY_DEFAULT_IDLE,
+                   grab_source_focus_cb,
+                   g_object_ref (self->source_view),
+                   g_object_unref);
 }
 
 static void
