@@ -1,251 +1,109 @@
 # Pinpoint
 
-Pinpoint helps hackers give excellent presentations. Write down the core ideas
-as concise plain text in the editor of your choice; Pinpoint turns them into
-big, image-led slides and reloads them live while you tune the source. Less
-text makes for a happier audience.
+Pinpoint is a GTK 4 and libadwaita presentation application for GNOME. It is a
+fidelity-first rebuild of the original Clutter-based Pinpoint: existing `.pin`
+presentations remain useful, while the application gains a modern setup screen,
+source editor, speaker view, rehearsal workflow, and PDF export.
 
-This is a GTK 4 and libadwaita rebuild of the original Clutter-based Pinpoint.
-It reads the same `.pin` presentation format and retains the original visual
-and interaction model while running cleanly on current Wayland desktops and
-inside a Flatpak sandbox.
+The renderer, parser, command-line interface, remote controls, and supported
+presentation syntax are implemented. Remaining work is tracked in
+[TODO.md](TODO.md); the completed compatibility surface is recorded in
+[docs/compatibility.md](docs/compatibility.md).
 
-This repository is under active reconstruction. The compatibility parser,
-GTK/GSK slide renderer, image and SVG backgrounds, GStreamer video playback,
-portal-backed camera slides and file opening, live reload, navigation, speaker
-and rehearsal views, embedded sandbox commands, PDF video thumbnails, legacy
-ClutterState transition JSON, and PDF export are working.
-See [the presentation format reference](docs/presentation-format.md) for the
-complete `.pin` syntax, [the compatibility ledger](docs/compatibility.md) for
-retained behaviour and validation history, [external editor
-support](docs/external-editors.md) for GtkSourceView highlighting and live
-editing, and [the product backlog](TODO.md) for all open work.
-The [command-line reference](docs/command-line.md) documents scripted checks,
-PDF export, exit statuses, and interruption guarantees.
+## Using Pinpoint
 
-## Build
+The setup screen provides three starting points:
 
-All builds and tests use the GNOME 50 Flatpak SDK. This keeps Meson, GTK,
-libadwaita, GStreamer, and the compiler consistent with the packaged app rather
-than depending on the host distribution.
+- **Present from Folder…** opens a folder portal so the presentation and its
+  relative assets remain available to the sandboxed application.
+- **New Presentation** creates a source-first presentation in the composition
+  editor.
+- The bundled **Introduction, Made with Pinpoint** can be viewed, saved, or
+  copied into the editor as a starting point.
 
-```sh
-flatpak run --user --filesystem="$PWD" --command=meson \
-  org.gnome.Sdk//50 setup "$PWD/_build"
-flatpak run --user --filesystem="$PWD" --command=meson \
-  org.gnome.Sdk//50 compile -C "$PWD/_build"
-flatpak run --user --filesystem="$PWD" --device=dri \
-  --talk-name=org.freedesktop.Flatpak \
-  --socket=wayland --socket=fallback-x11 --command=meson \
-  org.gnome.Sdk//50 test -C "$PWD/_build" --print-errorlogs \
-  --wrapper="$PWD/tests/run-in-devel-flatpak.sh"
-```
+After selecting a deck, its card shows a parsed slide and asset summary, then
+offers Present and Rehearse alongside quieter Edit and PDF export actions.
 
-The test wrapper gives Glycin the installed development application's real
-Flatpak identity. Install or refresh that application before running the suite:
+The composition editor uses the same parser and renderer as presentation mode.
+It provides Pinpoint-aware syntax highlighting and completion, inline source
+diagnostics, a live safe preview, explicit saving with external-change
+protection, and integrated rehearsal. Present opens the full delivery view;
+Rehearse keeps the editor open and places the speaker view beside it so source
+and timings can be adjusted together. See
+[docs/composition-editor.md](docs/composition-editor.md).
 
-```sh
-flatpak-builder --user --install --force-clean build-dir \
-  flatpak/com.nedrichards.pinpoint.Devel.json
-```
-
-Glycin starts its image loaders in a nested sandbox belonging to the calling
-Flatpak. Running the tests directly as `org.gnome.Sdk` supplies the SDK runtime
-identity instead of Pinpoint's application ID and makes JPEG-backed tests fail.
-Set `PINPOINT_FLATPAK_ID` if validating a differently named development build.
-
-Do not use the host Meson or compiler for release validation. If the SDK is
-installed system-wide rather than per-user, omit `--user`.
-
-The suite includes bounded page-curl CPU work, transition-idle checks,
-executable and media size budgets, and display-backed pixel profiles. The
-display tests run automatically when the SDK has a Wayland or X11 socket; the
-page-curl test also requires the explicitly granted GPU device. Without a
-display they report a skip. See [performance and efficiency](docs/performance.md)
-for the budgets and a display-enabled command, and see the
-[Wayland-first rendering pipeline](docs/rendering-pipeline.md) for video,
-camera, image, SVG, text, colour, and hardware-acceleration details. The
-[media-format policy](docs/media-formats.md) defines the portable video and
-audio combinations covered by the production Flatpak and its fixtures. See
-[accessibility](docs/accessibility.md) for stage and speaker-view semantics,
-keyboard and reduced-motion behaviour, and the visual-description format
-limitation tracked in the central backlog.
-The [remote-control architecture](docs/remote-control.md) documents the shared
-presentation actions, idle-inhibit contract, and transport evaluation plan.
-
-### Sanitizers and leak detection
-
-Run the sanitizer gate from a graphical host session with:
-
-```sh
-tests/run-leak-checks.sh
-```
-
-The script still compiles with AddressSanitizer and UndefinedBehaviorSanitizer
-inside the pinned GNOME SDK. It then runs those binaries directly on the host,
-using libraries from that exact SDK commit and graphics drivers from its
-declared Flatpak GL extension, because LeakSanitizer cannot inspect a process
-inside the Flatpak sandbox. Application leaks, a missing OpenGL 3.3 page-curl
-context, a page-curl shader or texture-upload failure, repeated media/camera
-file-descriptor growth, and repeated child-process descriptor growth fail the
-command. At runtime Pinpoint requires GTK's OpenGL or Vulkan renderer; the Cairo
-renderer is deliberately unsupported. The suppressions are limited to documented
-process-lifetime Fontconfig and Mesa EGL configuration caches plus a Cairo
-strict-string interceptor false positive.
-
-Run GCC's path-sensitive static analyzer and the additional strict C warning
-profile inside the same SDK with:
-
-```sh
-tests/run-gcc-analysis.sh
-```
-
-This gate keeps GCC-specific checks out of the portable default build while
-still treating analyzer, format, shadowing, prototype, alignment, undefined
-macro, duplicate-condition, null-dereference, and variable-length-array
-diagnostics as errors.
-
-Run the GCC line, function, and branch coverage gate from a graphical host
-session with:
-
-```sh
-tests/run-coverage.sh
-```
-
-The gate instruments a separate debug build with Meson's `b_coverage` option,
-runs every coverage-relevant test against the pinned SDK libraries in the host
-display context, and writes the full report to
-`_build-coverage/meson-logs/coverage.json`. It excludes generated and test code,
-requires 100% reachable line coverage in the deterministic modules that have
-reached it, and prevents every reviewed per-file baseline from regressing. See
-[the coverage policy](docs/coverage.md) for the limits and narrowly justified
-line exclusions.
-
-Run a presentation with:
-
-```sh
-_build/src/pinpoint presentation.pin
-```
-
-Running Pinpoint without a file opens a graphical setup screen for presenting
-or rehearsing, including fullscreen, speaker-view, comment, and display
-options. Choose the folder containing your `.pin` file so the Flatpak portal
-also grants Pinpoint access to relative images, videos, SVGs, and asset
-subdirectories. A sole presentation opens immediately; if the folder contains
-several, Pinpoint asks which one to use. The header menu can export a
-presentation to PDF, then open the PDF or show it in Files. It also provides
-application, current-implementation, original-project, copyright, and licence
-information.
-
-Choose **New Presentation** or **Edit** beside a selected deck to open the
-optional composition mode. It keeps the `.pin` source central: a slide outline
-and the real Pinpoint renderer follow the cursor while diagnostics and
-completion help with settings and assets. The editor follows the desktop's
-light or dark appearance. Its embedded preview mutes audio and does not run
-commands or cameras; **Present** and **Rehearse** deliberately enter the full
-presentation path. See the [composition-mode guide](docs/composition-editor.md).
-
-PDF export includes a focused setup step for A4 or US Letter paper, landscape
-or portrait orientation, separate speaker-note pages, and whether comment
-lines should become notes. The same output controls are available to scripts:
-
-```sh
-pinpoint --output=talk.pdf --pdf-page-size=a4 \
-  --pdf-orientation=landscape --pdf-no-speaker-notes talk.pin
-```
-
-Interactive exports show per-slide progress and can be cancelled. CLI exports
-show the same progress when standard error is a terminal; Ctrl+C and SIGTERM
-cancel cleanly without replacing an existing output file with a partial PDF or
-allowing the output to overwrite its source presentation. For a non-interactive
-format and asset check, run `pinpoint --check talk.pin`; see the complete
-[command-line reference](docs/command-line.md).
-
-Build the development Flatpak with:
-
-```sh
-flatpak-builder --user --install --force-clean build-dir \
-  flatpak/com.nedrichards.pinpoint.Devel.json
-```
-
-The production-shaped manifest is `flatpak/com.nedrichards.pinpoint.json`.
-Both manifests set the Meson prefix to `/app` explicitly so GNOME Builder's
-Flatpak pipeline and command-line `flatpak-builder` builds share the same
-installation layout.
+Pinpoint also follows files saved by external editors. Reloading, diagnostics,
+and editor integration are described in
+[docs/external-editors.md](docs/external-editors.md).
 
 ## Presentation format
 
-Settings before the first separator are presentation defaults. Settings on a
-separator apply to the following slide.
+Presentations are UTF-8 text files, conventionally named with a `.pin` suffix.
+Slides are separated by a line beginning with three or more hyphens:
 
 ```text
-[background.jpg]
-[font=Sans 60px]
-[bottom]
--- [black] [center]
-An image-led presentation
--- [photo.jpg] [fill] [text-align=center]
-Small amounts of concise text
-#Speaker notes start with # at the beginning of a line
+[font=Sans 48px]
+[duration=20]
+
+# Welcome
+
+---
+[bgcolor=#204060]
+
+This is the second slide.
 ```
 
-The [complete format reference](docs/presentation-format.md) documents every
-setting and retained compatibility rule. Native installs also provide
-GtkSourceView 5 highlighting for `.pin` files; see [external editor
-support](docs/external-editors.md) for GNOME Text Editor and Flatpak details.
-The historical `introduction.pin` is bundled as a worked example: choose
-**View** beside **Introduction Presentation** on the launch screen, or use its
-save button to make an editable copy with all of its assets.
+The format supports styled text, images, SVG, video, camera input, transitions,
+speaker notes, slide durations, and source-relative assets. The complete syntax
+reference is [docs/presentation-format.md](docs/presentation-format.md).
 
-## Controls
+## Presentation controls
 
-Composition mode uses Ctrl+S to save, Ctrl+Shift+S to save as, Ctrl+Space for
-Pinpoint settings and asset completion, Ctrl+Enter to present, Ctrl+Shift+R to
-rehearse, and Alt+Up/Down to move between slides.
+| Input | Action |
+| --- | --- |
+| Right, Down, Page Down, Space | Next slide |
+| Left, Up, Backspace, Page Up | Previous slide |
+| Home or `H` | First slide |
+| `F` or F11 | Toggle fullscreen |
+| F1 | Toggle speaker view |
+| `B` | Toggle screen blanking |
+| Return / Tab | Run / edit the slide command |
+| `S` in speaker view | Swap audience and speaker displays |
+| Escape or `Q` | Return to the editor, or quit Pinpoint |
 
-- Right, Down, Space, Page Down, or primary click: next slide
-- Left, Up, Backspace, Page Up, or secondary click: previous slide
-- One-finger touchscreen swipe or two-finger touchpad swipe: left for next,
-  right for previous
-- Forward/back or media next/previous: navigate when delivered to the app
-- F or F11: fullscreen
-- F1: speaker view
-- S in the speaker view: swap the audience and speaker displays
-- B: blank the audience screen
-- H or Home: first slide
-- Enter: run the slide command inside the sandbox
-- Tab: edit the slide command
-- Escape or Q: quit
+Touchscreen taps and horizontal swipes navigate slides. Standard MPRIS clients
+can use Next and Previous; Pinpoint deliberately rejects media playback, seek,
+and volume operations because they do not truthfully describe a presentation.
+Speaker view can run in another window or on a second monitor and shows the
+current slide, next slide, notes, and timing information.
 
-While a presentation is displayed, Pinpoint also exports one MPRIS player for
-that process. Desktop media controls and specialist remote applications can use
-MPRIS `Next` and `Previous` to change slides, including when neither Pinpoint
-window has focus. Pinpoint reports `Stopped`: play, pause, seek, and volume are
-deliberately unavailable because they do not truthfully describe presentation
-state.
+## Command line
 
-The speaker window also provides start/restart, pause, autoadvance, fullscreen,
-display swapping, and rehearsal controls. **Swap Displays** exchanges the
-audience and speaker displays while presenting fullscreen on two or more
-screens. Additional displays are left untouched. Rehearsal timings are written
-back only after advancing past the final slide. The real GNOME two-screen path
-has a separate [host display automation runner](docs/host-display-automation.md).
-While a presentation is displayed, Pinpoint inhibits session idling, screen
-blanking, and automatic locking even when it is windowed. The live GNOME
-inhibitor lifecycle is checked by `tests/run-host-inhibit-test.sh`.
+Run a deck directly with:
+
+```sh
+pinpoint talk.pin
+```
+
+Use `pinpoint --edit [talk.pin]` to open composition mode, or `pinpoint --help`
+for presentation, rehearsal, validation, camera, and PDF-export options. The
+stable command-line contract is documented in
+[docs/command-line.md](docs/command-line.md).
+
+## Development
+
+Pinpoint is built and tested with the pinned GNOME 50 SDK. Install the
+development Flatpak before running the test suite so media decoding has the
+application's Flatpak identity. The exact configure, build, test, analysis, and
+local-run commands are in [docs/development.md](docs/development.md). The
+documentation index in
+[docs/README.md](docs/README.md) links the format, architecture, compatibility,
+accessibility, performance, and validation references without repeating them
+here.
 
 ## License
 
-This GTK 4 implementation is Copyright © 2026 Nick Richards and is licensed
-under the GNU Lesser General Public License, version 2.1 or later.
-
-The original Clutter-based Pinpoint codebase, which inspired this independent
-implementation and established the presentation format and interaction model,
-is Copyright © 2010 Intel Corporation and the original Pinpoint contributors.
-It was also distributed under the GNU Lesser General Public License, version
-2.1 or later. Original authors are credited in the application's About dialog.
-
-The bundled introduction contains a short, modified excerpt of *Big Buck
-Bunny*, Copyright © 2008 Blender Foundation, licensed under Creative Commons
-Attribution 3.0. Complete source, attribution, licence, and modification details
-are recorded in [`data/introduction/ORIGIN.md`](data/introduction/ORIGIN.md).
+Pinpoint is distributed under the GNU Lesser General Public License, version
+2.1 or later. See [COPYING](COPYING). Provenance and licensing for the bundled
+introduction media are recorded in
+[data/introduction/ORIGIN.md](data/introduction/ORIGIN.md).

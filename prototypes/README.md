@@ -6,8 +6,11 @@ enabled. The MPRIS implementation itself is shared with production Pinpoint so
 the prototype exercises the shipped protocol adapter.
 
 ```sh
-meson setup _build-prototypes -Dremote_prototypes=true
-meson compile -C _build-prototypes
+flatpak run --user --filesystem="$PWD" --command=meson \
+  org.gnome.Sdk//50 setup "$PWD/_build-prototypes" \
+  -Dremote_prototypes=true
+flatpak run --user --filesystem="$PWD" --command=meson \
+  org.gnome.Sdk//50 compile -C "$PWD/_build-prototypes"
 prototypes/run-prototype-tests.sh
 ```
 

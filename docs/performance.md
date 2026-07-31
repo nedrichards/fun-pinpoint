@@ -31,13 +31,8 @@ hardware.
   limited to documented process-lifetime Fontconfig and Mesa EGL display
   configuration caches.
 
-Run the full display-backed suite inside the pinned SDK:
-
-```sh
-flatpak run --user --filesystem="$PWD" \
-  --device=dri --socket=wayland --socket=fallback-x11 --command=meson \
-  org.gnome.Sdk//50 test -C "$PWD/_build" --print-errorlogs
-```
+Run the full display-backed suite using the authoritative command in the
+[development workflow](development.md) before collecting focused figures.
 
 To print the page-curl timing and current size figures directly:
 

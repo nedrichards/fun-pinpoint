@@ -43,5 +43,5 @@ process. The production selection policy is therefore isolated in
 `pp-display-selection.c` and covered separately with deterministic one-, two-,
 and three-display cases, removal of either assigned display, and replugging.
 The host runner retains responsibility for the actual GTK-to-Mutter fullscreen
-and swap boundary. Its outstanding physical validation status lives in the
-central [Pinpoint backlog](../TODO.md), not in this procedure.
+and swap boundary. Repeat requirements after material display changes live in
+the central [Pinpoint backlog](../TODO.md), not in this procedure.
