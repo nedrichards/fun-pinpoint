@@ -341,7 +341,7 @@ static int
 run_cli_check (Pinpoint *pinpoint)
 {
   g_autoptr (GError) error = NULL;
-  g_autofree char *display_name = g_file_get_parse_name (pinpoint->file);
+  g_autofree char *display_name = pp_file_access_get_display_path (pinpoint->file);
   guint n_slides;
 
   if (!validate_presentation (pinpoint, &n_slides, &error))
@@ -535,7 +535,7 @@ slide_changed_cb (PpStage *stage,
 static void
 set_window_title (Pinpoint *pinpoint)
 {
-  g_autofree char *basename = NULL;
+  g_autofree char *display_path = NULL;
   g_autofree char *title = NULL;
 
   if (pinpoint->file == NULL)
@@ -544,8 +544,8 @@ set_window_title (Pinpoint *pinpoint)
       return;
     }
 
-  basename = g_file_get_basename (pinpoint->file);
-  title = g_strdup_printf ("%s — Pinpoint", basename);
+  display_path = pp_file_access_get_display_path (pinpoint->file);
+  title = g_strdup_printf ("%s — Pinpoint", display_path);
   gtk_window_set_title (pinpoint->window, title);
 }
 
@@ -1507,7 +1507,7 @@ show_presentation_choice (Pinpoint *pinpoint,
   for (guint i = 0; i < files->len; i++)
     {
       GFile *file = g_ptr_array_index (files, i);
-      g_autofree char *name = g_file_get_basename (file);
+      g_autofree char *name = pp_file_access_get_display_path (file);
       GtkWidget *row = adw_action_row_new ();
       GtkWidget *choose = gtk_button_new_from_icon_name ("go-next-symbolic");
 

@@ -1,5 +1,6 @@
 #include "pp-presentation-info.h"
 
+#include "pp-file-access.h"
 #include "pp-presentation.h"
 
 struct _PpPresentationInfo
@@ -24,7 +25,7 @@ pp_presentation_info_new (GFile    *file,
 
   g_return_val_if_fail (G_IS_FILE (file), NULL);
   self = g_new0 (PpPresentationInfo, 1);
-  self->name = g_file_get_basename (file);
+  self->name = pp_file_access_get_display_path (file);
   presentation = pp_presentation_load (file,
                                        ignore_comments,
                                        NULL,

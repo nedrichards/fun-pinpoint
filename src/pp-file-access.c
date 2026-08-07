@@ -2,6 +2,32 @@
 
 #include "pp-file-access.h"
 
+#define DOCUMENT_PORTAL_HOST_PATH_ATTRIBUTE \
+  "xattr::document-portal.host-path"
+
+char *
+pp_file_access_get_display_path (GFile *file)
+{
+  g_autoptr (GFileInfo) info = NULL;
+  const char *host_path;
+
+  g_return_val_if_fail (G_IS_FILE (file), NULL);
+
+  info = g_file_query_info (file,
+                             DOCUMENT_PORTAL_HOST_PATH_ATTRIBUTE,
+                             G_FILE_QUERY_INFO_NONE,
+                             NULL,
+                             NULL);
+  host_path = info != NULL
+    ? g_file_info_get_attribute_string (info,
+                                        DOCUMENT_PORTAL_HOST_PATH_ATTRIBUTE)
+    : NULL;
+  if (host_path != NULL && host_path[0] != '\0')
+    return g_strdup (host_path);
+
+  return g_file_get_basename (file);
+}
+
 static gint
 compare_files (gconstpointer a,
                gconstpointer b)
