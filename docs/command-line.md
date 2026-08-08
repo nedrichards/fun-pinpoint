@@ -5,7 +5,7 @@ checking and PDF controls. A valid historical invocation remains valid:
 
 ```sh
 pinpoint [--maximized] [--fullscreen] [--speakermode] [--rehearse] \
-  [--ignore-comments] [--camera=DEVICE] presentation.pin
+  [--ignore-comments] presentation.pin
 ```
 
 Exactly one presentation may be supplied. Running without one opens the GTK
@@ -26,6 +26,19 @@ a clear error when `--edit` is requested.
 
 Use `--version` for the installed version and `--help` for the complete option
 list.
+
+## Camera backgrounds
+
+`[camera]` backgrounds use the desktop **Camera portal**. When an active,
+visible presentation reaches a camera slide, Pinpoint requests access and uses
+the PipeWire stream supplied by the portal. No raw `/dev/video*` access or
+device-specific Flatpak permission is required.
+
+`--camera=DEVICE` and `-c DEVICE` were historical command-line options, but
+they never selected a camera in the portal implementation. They are now
+rejected with a migration diagnostic. Remove the option and approve the portal
+request; select a preferred camera through the desktop's camera or portal
+settings when that environment offers a choice.
 
 ## Checking a presentation
 

@@ -41,8 +41,6 @@ void       pp_stage_set_accessible_context (PpStage    *self,
                                             const char *context);
 void       pp_stage_set_audio_enabled (PpStage  *self,
                                        gboolean  enabled);
-void       pp_stage_set_camera_device (PpStage    *self,
-                                       const char *device);
 void       pp_stage_set_camera_enabled (PpStage  *self,
                                         gboolean  enabled);
 void       pp_stage_share_asset_cache (PpStage *self,

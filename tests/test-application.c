@@ -474,6 +474,23 @@ test_invalid_pdf_option (void)
 }
 
 static void
+test_legacy_camera_device_is_rejected (void)
+{
+  const char *arguments[] = {
+    pinpoint_path,
+    "--camera=/dev/video0",
+    presentation_path,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = launch_application (arguments);
+  g_autofree char *stderr_text = finish_process (process, EXIT_FAILURE);
+
+  g_assert_nonnull (strstr (stderr_text,
+                            "--camera=DEVICE is no longer supported"));
+  g_assert_nonnull (strstr (stderr_text, "desktop Camera portal"));
+}
+
+static void
 test_version (void)
 {
   const char *arguments[] = { pinpoint_path, "--version", NULL };
@@ -983,6 +1000,8 @@ main (int   argc,
   g_test_add_func ("/application/reload-then-shutdown",
                    test_reload_then_shutdown);
   g_test_add_func ("/application/invalid-pdf-option", test_invalid_pdf_option);
+  g_test_add_func ("/application/legacy-camera-device",
+                   test_legacy_camera_device_is_rejected);
   g_test_add_func ("/application/version", test_version);
   g_test_add_func ("/application/check-presentation", test_check_presentation);
   g_test_add_func ("/application/check-legacy-transition",

@@ -91,7 +91,6 @@ typedef struct
   gboolean bundled_read_only;
   gboolean presenting;
   PpPdfOptions pdf_options;
-  char *camera_device;
   GListModel *monitors;
   gulong monitors_changed_id;
   GdkMonitor *presenter_monitor;
@@ -3079,7 +3078,6 @@ activate_cb (GtkApplication *application,
                     pinpoint);
   gtk_window_set_default_size (pinpoint->window, 800, 600);
   pinpoint->stage = PP_STAGE (pp_stage_new ());
-  pp_stage_set_camera_device (pinpoint->stage, pinpoint->camera_device);
   pinpoint->overlay = GTK_OVERLAY (gtk_overlay_new ());
   gtk_overlay_set_child (pinpoint->overlay, GTK_WIDGET (pinpoint->stage));
 
@@ -3316,7 +3314,6 @@ pinpoint_clear (Pinpoint *pinpoint)
   pinpoint->end_presentation_button = NULL;
   pinpoint->end_presentation_revealer = NULL;
   g_clear_object (&pinpoint->application);
-  g_free (pinpoint->camera_device);
 }
 
 static gboolean
@@ -3388,6 +3385,7 @@ main (int   argc,
   g_autofree char *output_filename = NULL;
   g_autofree char *pdf_page_size = NULL;
   g_autofree char *pdf_orientation = NULL;
+  g_autofree char *legacy_camera_device = NULL;
   gboolean pdf_no_speaker_notes = FALSE;
   gboolean check_only = FALSE;
   gboolean show_version = FALSE;
@@ -3412,8 +3410,8 @@ main (int   argc,
       "PDF orientation: landscape or portrait", "ORIENTATION" },
     { "pdf-no-speaker-notes", 0, 0, G_OPTION_ARG_NONE, &pdf_no_speaker_notes,
       "Do not add speaker-note pages to PDF output", NULL },
-    { "camera", 'c', 0, G_OPTION_ARG_STRING, &pinpoint.camera_device,
-      "Device to use for camera backgrounds", "DEVICE" },
+    { "camera", 'c', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_STRING,
+      &legacy_camera_device, NULL, "DEVICE" },
     { "check", 0, 0, G_OPTION_ARG_NONE, &check_only,
       "Check presentation syntax and referenced assets, then exit", NULL },
     { "version", 0, 0, G_OPTION_ARG_NONE, &show_version,
@@ -3440,6 +3438,15 @@ main (int   argc,
   if (!g_option_context_parse (option_context, &argc, &argv, &error))
     {
       g_printerr ("pinpoint: %s\n", error->message);
+      return EXIT_FAILURE;
+    }
+
+  if (legacy_camera_device != NULL)
+    {
+      g_printerr ("pinpoint: --camera=DEVICE is no longer supported; "
+                  "camera backgrounds use the desktop Camera portal. "
+                  "Remove --camera and approve the portal request when a "
+                  "[camera] slide is shown.\n");
       return EXIT_FAILURE;
     }
 

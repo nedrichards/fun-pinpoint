@@ -146,7 +146,6 @@ struct _PpStage
   guint camera_idle_id;
   guint camera_response_subscription;
   char *camera_request_path;
-  char *camera_device;
   gboolean camera_enabled;
   gboolean camera_request_pending;
   gboolean camera_request_attempted;
@@ -2467,7 +2466,6 @@ pp_stage_dispose (GObject *object)
   g_clear_pointer (&self->failed_transitions, g_hash_table_unref);
   g_clear_object (&self->portal_connection);
   g_clear_pointer (&self->camera_request_path, g_free);
-  g_clear_pointer (&self->camera_device, g_free);
   g_clear_pointer (&self->accessible_context, g_free);
   if (self->curl_view != NULL)
     {
@@ -2838,15 +2836,6 @@ pp_stage_set_audio_enabled (PpStage  *self,
   stop_all_media (self);
   g_hash_table_remove_all (self->media);
   gtk_widget_queue_draw (GTK_WIDGET (self));
-}
-
-void
-pp_stage_set_camera_device (PpStage    *self,
-                            const char *device)
-{
-  g_return_if_fail (PP_IS_STAGE (self));
-  g_free (self->camera_device);
-  self->camera_device = g_strdup (device);
 }
 
 void
