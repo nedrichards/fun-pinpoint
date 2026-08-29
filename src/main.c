@@ -12,6 +12,7 @@
 #include "pp-pdf.h"
 #include "pp-render.h"
 #include "pp-speaker.h"
+#include "pp-source.h"
 #include "pp-stage.h"
 #include "pp-transition.h"
 
@@ -22,6 +23,7 @@
 #include <gmodule.h>
 #include <gtk/gtk.h>
 #include <gst/gst.h>
+#include <json-glib/json-glib.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -354,6 +356,188 @@ run_cli_check (Pinpoint *pinpoint)
            n_slides,
            n_slides == 1 ? "slide" : "slides");
   return EXIT_SUCCESS;
+}
+
+static gboolean
+completion_position_to_offset (const char *source,
+                               const char *position,
+                               gsize      *offset_out,
+                               GError    **error)
+{
+  g_auto (GStrv) parts = NULL;
+  guint64 line;
+  guint64 column;
+  gsize offset = 0;
+
+  parts = g_strsplit (position, ":", 2);
+  if (parts[0] == NULL || parts[1] == NULL || parts[2] != NULL ||
+      !g_ascii_string_to_unsigned (parts[0], 10, 1, G_MAXUINT, &line, NULL) ||
+      !g_ascii_string_to_unsigned (parts[1], 10, 1, G_MAXUINT, &column, NULL))
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                   "--complete-position must be a one-based LINE:COLUMN");
+      return FALSE;
+    }
+  for (guint64 current = 1; current < line; current++)
+    {
+      const char *newline = strchr (source + offset, '\n');
+
+      if (newline == NULL)
+        {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                       "completion line is outside the presentation");
+          return FALSE;
+        }
+      offset = newline - source + 1;
+    }
+  {
+    const char *newline = strchr (source + offset, '\n');
+    gsize line_end = newline != NULL ? (gsize) (newline - source) : strlen (source);
+
+    if (column - 1 > line_end - offset)
+      {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                     "completion column is outside the line");
+        return FALSE;
+      }
+  }
+  *offset_out = offset + column - 1;
+  return TRUE;
+}
+
+static int
+run_format_assist (Pinpoint   *pinpoint,
+                   const char *kind,
+                   const char *completion_position)
+{
+  g_autoptr (GError) error = NULL;
+  g_autofree char *source = NULL;
+  g_autoptr (JsonBuilder) builder = json_builder_new ();
+  g_autoptr (JsonGenerator) generator = json_generator_new ();
+  g_autoptr (JsonNode) root = NULL;
+  g_autofree char *json = NULL;
+
+  if (!g_file_load_contents (pinpoint->file, NULL, &source, NULL,
+                             NULL, &error))
+    goto fail;
+  json_builder_begin_object (builder);
+  json_builder_set_member_name (builder, "version");
+  json_builder_add_int_value (builder, 1);
+  json_builder_set_member_name (builder, "kind");
+  json_builder_add_string_value (builder, kind);
+  if (g_str_equal (kind, "diagnostics"))
+    {
+      g_autoptr (PpSourceAnalysis) analysis = pp_source_analyze (source, pinpoint->file);
+
+      json_builder_set_member_name (builder, "diagnostics");
+      json_builder_begin_array (builder);
+      for (guint i = 0; i < pp_source_analysis_get_n_diagnostics (analysis); i++)
+        {
+          const PpSourceDiagnostic *diagnostic =
+            pp_source_analysis_get_diagnostic (analysis, i);
+
+          json_builder_begin_object (builder);
+          json_builder_set_member_name (builder, "start");
+          json_builder_add_int_value (builder, diagnostic->start);
+          json_builder_set_member_name (builder, "end");
+          json_builder_add_int_value (builder, diagnostic->end);
+          json_builder_set_member_name (builder, "severity");
+          json_builder_add_string_value (builder,
+            diagnostic->severity == PP_SOURCE_DIAGNOSTIC_ERROR ? "error" : "warning");
+          json_builder_set_member_name (builder, "message");
+          json_builder_add_string_value (builder, diagnostic->message);
+          json_builder_end_object (builder);
+        }
+      json_builder_end_array (builder);
+    }
+  else if (g_str_equal (kind, "symbols"))
+    {
+      g_autoptr (PpSourceAnalysis) analysis = pp_source_analyze (source, pinpoint->file);
+
+      json_builder_set_member_name (builder, "symbols");
+      json_builder_begin_array (builder);
+      for (guint i = 0; i < pp_source_analysis_get_n_slides (analysis); i++)
+        {
+          const PpSourceSlide *slide = pp_source_analysis_get_slide (analysis, i);
+
+          json_builder_begin_object (builder);
+          json_builder_set_member_name (builder, "index");
+          json_builder_add_int_value (builder, i);
+          json_builder_set_member_name (builder, "start");
+          json_builder_add_int_value (builder, slide->start);
+          json_builder_set_member_name (builder, "separator_end");
+          json_builder_add_int_value (builder, slide->separator_end);
+          json_builder_set_member_name (builder, "end");
+          json_builder_add_int_value (builder, slide->end);
+          json_builder_set_member_name (builder, "title");
+          json_builder_add_string_value (builder, slide->title);
+          json_builder_end_object (builder);
+        }
+      json_builder_end_array (builder);
+    }
+  else if (g_str_equal (kind, "assets"))
+    {
+      g_autoptr (GPtrArray) assets = pp_source_list_assets (pinpoint->file);
+
+      json_builder_set_member_name (builder, "assets");
+      json_builder_begin_array (builder);
+      for (guint i = 0; i < assets->len; i++)
+        json_builder_add_string_value (builder, g_ptr_array_index (assets, i));
+      json_builder_end_array (builder);
+    }
+  else if (g_str_equal (kind, "completions"))
+    {
+      gsize offset;
+      g_autoptr (GPtrArray) completions = NULL;
+
+      if (completion_position == NULL)
+        {
+          g_set_error (&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                       "--format-assist=completions requires --complete-position");
+          goto fail;
+        }
+      if (!completion_position_to_offset (source, completion_position, &offset, &error))
+        goto fail;
+      completions = pp_source_complete (source, pinpoint->file, offset);
+      json_builder_set_member_name (builder, "offset");
+      json_builder_add_int_value (builder, offset);
+      json_builder_set_member_name (builder, "completions");
+      json_builder_begin_array (builder);
+      for (guint i = 0; i < completions->len; i++)
+        {
+          const PpSourceCompletion *completion = g_ptr_array_index (completions, i);
+
+          json_builder_begin_object (builder);
+          json_builder_set_member_name (builder, "label");
+          json_builder_add_string_value (builder, completion->label);
+          json_builder_set_member_name (builder, "insert_text");
+          json_builder_add_string_value (builder, completion->insert_text);
+          json_builder_set_member_name (builder, "detail");
+          json_builder_add_string_value (builder, completion->detail);
+          json_builder_set_member_name (builder, "replace_start");
+          json_builder_add_int_value (builder, completion->replace_start);
+          json_builder_set_member_name (builder, "cursor_back");
+          json_builder_add_int_value (builder, completion->cursor_back);
+          json_builder_end_object (builder);
+        }
+      json_builder_end_array (builder);
+    }
+  else
+    {
+      g_set_error (&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                   "--format-assist must be diagnostics, symbols, assets, or completions");
+      goto fail;
+    }
+  json_builder_end_object (builder);
+  root = json_builder_get_root (builder);
+  json_generator_set_root (generator, root);
+  json = json_generator_to_data (generator, NULL);
+  g_print ("%s\n", json);
+  return EXIT_SUCCESS;
+
+fail:
+  g_printerr ("pinpoint: %s\n", error->message);
+  return EXIT_FAILURE;
 }
 
 static gboolean
@@ -3386,6 +3570,8 @@ main (int   argc,
   g_autofree char *pdf_page_size = NULL;
   g_autofree char *pdf_orientation = NULL;
   g_autofree char *legacy_camera_device = NULL;
+  g_autofree char *format_assist = NULL;
+  g_autofree char *complete_position = NULL;
   gboolean pdf_no_speaker_notes = FALSE;
   gboolean check_only = FALSE;
   gboolean show_version = FALSE;
@@ -3414,6 +3600,10 @@ main (int   argc,
       &legacy_camera_device, NULL, "DEVICE" },
     { "check", 0, 0, G_OPTION_ARG_NONE, &check_only,
       "Check presentation syntax and referenced assets, then exit", NULL },
+    { "format-assist", 0, 0, G_OPTION_ARG_STRING, &format_assist,
+      "Emit JSON diagnostics, symbols, assets, or completions", "KIND" },
+    { "complete-position", 0, 0, G_OPTION_ARG_STRING, &complete_position,
+      "One-based LINE:COLUMN for --format-assist=completions", "LINE:COLUMN" },
     { "version", 0, 0, G_OPTION_ARG_NONE, &show_version,
       "Show the Pinpoint version", NULL },
     { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &files,
@@ -3465,7 +3655,7 @@ main (int   argc,
     }
 
   if (pinpoint.edit_mode &&
-      (check_only || output_filename != NULL || pinpoint.rehearse ||
+      (check_only || format_assist != NULL || output_filename != NULL || pinpoint.rehearse ||
        pinpoint.fullscreen || pinpoint.speaker_mode))
     {
       g_printerr ("pinpoint: --edit cannot be combined with presentation, rehearsal, check, or PDF options\n");
@@ -3499,6 +3689,34 @@ main (int   argc,
 
   if (files != NULL && files[0] != NULL)
     pinpoint.file = g_file_new_for_commandline_arg (files[0]);
+
+  if (complete_position != NULL &&
+      (format_assist == NULL || !g_str_equal (format_assist, "completions")))
+    {
+      g_printerr ("pinpoint: --complete-position requires --format-assist=completions\n");
+      pinpoint_clear (&pinpoint);
+      return EXIT_FAILURE;
+    }
+
+  if (format_assist != NULL)
+    {
+      if (check_only || output_filename != NULL || pinpoint.rehearse ||
+          pinpoint.fullscreen || pinpoint.speaker_mode)
+        {
+          g_printerr ("pinpoint: --format-assist cannot be combined with presentation, rehearsal, check, or PDF options\n");
+          pinpoint_clear (&pinpoint);
+          return EXIT_FAILURE;
+        }
+      if (pinpoint.file == NULL)
+        {
+          g_printerr ("pinpoint: --format-assist requires a presentation\n");
+          pinpoint_clear (&pinpoint);
+          return EXIT_FAILURE;
+        }
+      status = run_format_assist (&pinpoint, format_assist, complete_position);
+      pinpoint_clear (&pinpoint);
+      return status;
+    }
 
   if (check_only)
     {

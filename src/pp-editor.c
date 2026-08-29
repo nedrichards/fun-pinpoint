@@ -926,45 +926,73 @@ preview_slide_changed_cb (PpStage *stage,
 }
 
 static void
-completion_clicked_cb (GtkButton *button,
-                       gpointer   user_data)
+apply_completion (PpEditor                 *self,
+                  const PpSourceCompletion *completion)
 {
-  PpEditor *self = user_data;
-  const char *text = g_object_get_data (G_OBJECT (button), "insertion");
-  gboolean needs_value = GPOINTER_TO_INT (
-    g_object_get_data (G_OBJECT (button), "needs-value"));
+  GtkTextIter start;
   GtkTextIter insert;
+  g_autofree char *source = buffer_text (self);
 
+  gtk_text_buffer_get_iter_at_offset (GTK_TEXT_BUFFER (self->buffer),
+                                      &start,
+                                      byte_to_character_offset (source,
+                                                                completion->replace_start));
   gtk_text_buffer_get_iter_at_mark (GTK_TEXT_BUFFER (self->buffer),
                                     &insert,
                                     gtk_text_buffer_get_insert (GTK_TEXT_BUFFER (self->buffer)));
-  gtk_text_buffer_insert (GTK_TEXT_BUFFER (self->buffer), &insert, text, -1);
-  if (needs_value)
-    gtk_text_iter_backward_char (&insert);
-  gtk_text_buffer_place_cursor (GTK_TEXT_BUFFER (self->buffer), &insert);
+  gtk_text_buffer_delete (GTK_TEXT_BUFFER (self->buffer), &start, &insert);
+  gtk_text_buffer_insert (GTK_TEXT_BUFFER (self->buffer), &start,
+                          completion->insert_text, -1);
+  for (guint i = 0; i < completion->cursor_back; i++)
+    gtk_text_iter_backward_char (&start);
+  gtk_text_buffer_place_cursor (GTK_TEXT_BUFFER (self->buffer), &start);
+  gtk_widget_grab_focus (GTK_WIDGET (self->source_view));
   gtk_popover_popdown (self->completion);
 }
 
 static void
-add_completion (PpEditor   *self,
-                GtkListBox *list,
-                const char *label,
-                const char *insertion,
-                gboolean    needs_value)
+completion_activated_cb (GtkListBox    *list,
+                         GtkListBoxRow *row,
+                         gpointer       user_data)
 {
-  GtkWidget *button = gtk_button_new_with_label (label);
+  PpEditor *self = user_data;
+  const PpSourceCompletion *completion = g_object_get_data (
+    G_OBJECT (row), "pinpoint-source-completion");
 
-  gtk_button_set_has_frame (GTK_BUTTON (button), FALSE);
-  gtk_widget_set_halign (button, GTK_ALIGN_FILL);
-  g_object_set_data_full (G_OBJECT (button),
-                          "insertion",
-                          g_strdup (insertion),
-                          g_free);
-  g_object_set_data (G_OBJECT (button),
-                     "needs-value",
-                     GINT_TO_POINTER (needs_value));
-  g_signal_connect (button, "clicked", G_CALLBACK (completion_clicked_cb), self);
-  gtk_list_box_append (list, button);
+  (void) list;
+  if (completion != NULL)
+    apply_completion (self, completion);
+}
+
+static gboolean
+completion_key_pressed_cb (GtkEventControllerKey *controller,
+                           guint                  keyval,
+                           guint                  keycode,
+                           GdkModifierType        state,
+                           gpointer               user_data)
+{
+  PpEditor *self = user_data;
+  GtkListBox *list = GTK_LIST_BOX (gtk_event_controller_get_widget (
+    GTK_EVENT_CONTROLLER (controller)));
+
+  (void) keycode;
+  (void) state;
+  if (keyval == GDK_KEY_Escape)
+    {
+      gtk_popover_popdown (self->completion);
+      gtk_widget_grab_focus (GTK_WIDGET (self->source_view));
+      return GDK_EVENT_STOP;
+    }
+  if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter ||
+      keyval == GDK_KEY_Tab)
+    {
+      GtkListBoxRow *row = gtk_list_box_get_selected_row (list);
+
+      if (row != NULL)
+        completion_activated_cb (list, row, self);
+      return GDK_EVENT_STOP;
+    }
+  return GDK_EVENT_PROPAGATE;
 }
 
 static void
@@ -972,71 +1000,55 @@ show_completion (PpEditor *self)
 {
   GtkListBox *list = GTK_LIST_BOX (gtk_list_box_new ());
   GtkWidget *scroll = gtk_scrolled_window_new ();
-  const char *const *names = pp_source_setting_names ();
+  GtkTextIter insert;
+  g_autofree char *source = buffer_text (self);
+  g_autoptr (GPtrArray) completions = NULL;
 
-  for (guint i = 0; names[i] != NULL; i++)
+  gtk_text_buffer_get_iter_at_mark (GTK_TEXT_BUFFER (self->buffer), &insert,
+                                    gtk_text_buffer_get_insert (GTK_TEXT_BUFFER (self->buffer)));
+  completions = pp_source_complete (source, self->file,
+                                    iter_byte_offset (self, &insert));
+  if (completions->len == 0)
+    return;
+  gtk_list_box_set_selection_mode (list, GTK_SELECTION_SINGLE);
+  gtk_list_box_set_activate_on_single_click (list, TRUE);
+  for (guint i = 0; i < completions->len; i++)
     {
-      const char *const *values = pp_source_setting_values (names[i]);
+      PpSourceCompletion *completion = g_ptr_array_index (completions, i);
+      GtkListBoxRow *row = GTK_LIST_BOX_ROW (gtk_list_box_row_new ());
+      GtkWidget *label = gtk_label_new (NULL);
+      g_autofree char *text = g_strdup_printf ("%s\n%s", completion->label,
+                                                completion->detail);
 
-      if (values != NULL)
-        for (guint j = 0; values[j] != NULL; j++)
-          {
-            g_autofree char *setting = g_strconcat (names[i], values[j], NULL);
-            g_autofree char *insertion = g_strdup_printf ("[%s]", setting);
-            add_completion (self, list, setting, insertion, FALSE);
-          }
-      else
-        {
-          g_autofree char *insertion = g_strdup_printf ("[%s]", names[i]);
-          add_completion (self,
-                          list,
-                          names[i],
-                          insertion,
-                          g_str_has_suffix (names[i], "="));
-        }
+      gtk_label_set_text (GTK_LABEL (label), text);
+      gtk_label_set_xalign (GTK_LABEL (label), 0.0);
+      gtk_widget_set_margin_start (label, 8);
+      gtk_widget_set_margin_end (label, 8);
+      gtk_widget_set_margin_top (label, 4);
+      gtk_widget_set_margin_bottom (label, 4);
+      gtk_list_box_row_set_child (row, label);
+      g_object_set_data_full (G_OBJECT (row), "pinpoint-source-completion",
+                              completion, (GDestroyNotify) pp_source_completion_free);
+      g_ptr_array_index (completions, i) = NULL;
+      gtk_list_box_append (list, GTK_WIDGET (row));
     }
-  add_completion (self, list, "New slide", "\n--\n", FALSE);
-  add_completion (self, list, "Speaker note", "\n#", FALSE);
-  add_completion (self, list, "Visual description", "\n#@alt:", FALSE);
+  g_signal_connect (list, "row-activated", G_CALLBACK (completion_activated_cb), self);
+  {
+    GtkEventController *keys = gtk_event_controller_key_new ();
 
-  if (self->file != NULL)
-    {
-      g_autoptr (GFile) parent = g_file_get_parent (self->file);
-      g_autoptr (GFileEnumerator) enumerator = parent != NULL
-        ? g_file_enumerate_children (parent,
-                                     G_FILE_ATTRIBUTE_STANDARD_NAME ","
-                                     G_FILE_ATTRIBUTE_STANDARD_TYPE,
-                                     G_FILE_QUERY_INFO_NONE,
-                                     NULL,
-                                     NULL)
-        : NULL;
-      if (enumerator != NULL)
-        {
-          GFileInfo *info;
-
-          while ((info = g_file_enumerator_next_file (enumerator, NULL, NULL)) != NULL)
-            {
-              const char *name = g_file_info_get_name (info);
-
-              if (g_file_info_get_file_type (info) == G_FILE_TYPE_REGULAR &&
-                  !g_str_has_suffix (name, ".pin"))
-                {
-                  g_autofree char *label = g_strdup_printf ("Asset: %s", name);
-                  g_autofree char *insertion = g_strdup_printf ("[%s]", name);
-                  add_completion (self, list, label, insertion, FALSE);
-                }
-              g_object_unref (info);
-            }
-        }
-    }
+    g_signal_connect (keys, "key-pressed", G_CALLBACK (completion_key_pressed_cb), self);
+    gtk_widget_add_controller (GTK_WIDGET (list), keys);
+  }
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll),
                                   GTK_POLICY_NEVER,
                                   GTK_POLICY_AUTOMATIC);
-  gtk_widget_set_size_request (scroll, 280, 320);
+  gtk_widget_set_size_request (scroll, 340, 320);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroll),
                                  GTK_WIDGET (list));
   gtk_popover_set_child (self->completion, scroll);
   gtk_popover_popup (self->completion);
+  gtk_list_box_select_row (list, gtk_list_box_get_row_at_index (list, 0));
+  gtk_widget_grab_focus (GTK_WIDGET (list));
 }
 
 static gboolean

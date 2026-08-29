@@ -131,6 +131,40 @@ test_completion_catalogue (void)
   g_assert_null (pp_source_setting_values ("fill"));
 }
 
+static void
+test_contextual_completion (void)
+{
+  g_autoptr (GPtrArray) settings = pp_source_complete ("-- [text-align=c",
+                                                        NULL,
+                                                        strlen ("-- [text-align=c"));
+  g_autoptr (GPtrArray) markup = pp_source_complete ("--\n<b", NULL,
+                                                      strlen ("--\n<b"));
+  PpSourceCompletion *setting = g_ptr_array_index (settings, 0);
+  PpSourceCompletion *tag = g_ptr_array_index (markup, 0);
+
+  g_assert_cmpuint (settings->len, ==, 1);
+  g_assert_cmpstr (setting->label, ==, "center");
+  g_assert_cmpstr (setting->insert_text, ==, "center]");
+  g_assert_cmpuint (setting->replace_start, ==, strlen ("-- [text-align="));
+  g_assert_cmpuint (markup->len, >, 0);
+  g_assert_cmpstr (tag->label, ==, "b");
+  g_assert_cmpstr (tag->insert_text, ==, "b></b>");
+  g_assert_cmpuint (tag->cursor_back, ==, 4);
+}
+
+static void
+test_contextual_completion_with_closing_pair (void)
+{
+  g_autoptr (GPtrArray) markup = pp_source_complete ("--\n<b>", NULL,
+                                                      strlen ("--\n<b"));
+  PpSourceCompletion *tag = g_ptr_array_index (markup, 0);
+
+  g_assert_cmpuint (markup->len, ==, 2);
+  g_assert_cmpstr (tag->label, ==, "b");
+  g_assert_cmpstr (tag->insert_text, ==, "b></b");
+  g_assert_cmpuint (tag->cursor_back, ==, 3);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -141,5 +175,8 @@ main (int   argc,
   g_test_add_func ("/source/apply-durations", test_apply_durations_preserves_source);
   g_test_add_func ("/source/duration-count", test_duration_count_mismatch);
   g_test_add_func ("/source/completion-catalogue", test_completion_catalogue);
+  g_test_add_func ("/source/contextual-completion", test_contextual_completion);
+  g_test_add_func ("/source/contextual-completion-closing-pair",
+                   test_contextual_completion_with_closing_pair);
   return g_test_run ();
 }

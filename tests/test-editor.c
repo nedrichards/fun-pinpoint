@@ -286,6 +286,43 @@ find_outline (GtkWidget *widget)
   return NULL;
 }
 
+static GtkListBox *
+find_completion_list (GtkWidget *widget)
+{
+  if (GTK_IS_LIST_BOX (widget) &&
+      !gtk_widget_has_css_class (widget, "navigation-sidebar"))
+    return GTK_LIST_BOX (widget);
+
+  for (GtkWidget *child = gtk_widget_get_first_child (widget);
+       child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    {
+      GtkListBox *list = find_completion_list (child);
+
+      if (list != NULL)
+        return list;
+    }
+  return NULL;
+}
+
+static GtkListBoxRow *
+find_completion_row (GtkListBox *list,
+                     const char *label)
+{
+  for (guint i = 0; ; i++)
+    {
+      GtkListBoxRow *row = gtk_list_box_get_row_at_index (list, i);
+      GtkWidget *child;
+
+      if (row == NULL)
+        return NULL;
+      child = gtk_list_box_row_get_child (row);
+      if (GTK_IS_LABEL (child) &&
+          g_str_has_prefix (gtk_label_get_text (GTK_LABEL (child)), label))
+        return row;
+    }
+}
+
 static void
 assert_reparse_preserves_cursor (PpEditorModuleCreateFunc create_editor,
                                  const PpEditorHost       *host)
@@ -510,7 +547,9 @@ assert_completion_and_shortcuts (PpEditorModuleCreateFunc create_editor,
   GtkTextIter iter;
   GtkPopover *popover;
   GtkEventControllerKey *keys = NULL;
-  GtkWidget *button;
+  GtkListBox *completion_list;
+  GtkListBoxRow *completion_row;
+  GtkEventControllerKey *completion_keys = NULL;
   GtkWidget *focus;
   GtkListBox *outline;
   g_autofree char *updated = NULL;
@@ -542,24 +581,39 @@ assert_completion_and_shortcuts (PpEditorModuleCreateFunc create_editor,
   outline = find_outline (editor);
   g_assert_nonnull (outline);
 
+  gtk_text_buffer_set_text (buffer, "-- [dur", -1);
   gtk_text_buffer_get_end_iter (buffer, &iter);
   gtk_text_buffer_place_cursor (buffer, &iter);
   g_assert_true (emit_key (keys, GDK_KEY_space, GDK_CONTROL_MASK));
   run_loop_for (50);
   g_assert_true (gtk_widget_get_visible (GTK_WIDGET (popover)));
-  g_assert_nonnull (find_button (GTK_WIDGET (popover), "text-align=center"));
-  g_assert_nonnull (find_button (GTK_WIDGET (popover), "Asset: visual.png"));
-  g_assert_null (find_button (GTK_WIDGET (popover), "Asset: other.pin"));
-  button = find_button (GTK_WIDGET (popover), "duration=");
-  g_assert_nonnull (button);
-  g_signal_emit_by_name (button, "clicked");
+  completion_list = find_completion_list (GTK_WIDGET (popover));
+  g_assert_nonnull (completion_list);
+  completion_row = find_completion_row (completion_list, "duration=");
+  g_assert_nonnull (completion_row);
+  gtk_list_box_select_row (completion_list, completion_row);
+  completion_keys = find_key_controller (GTK_WIDGET (completion_list));
+  g_assert_nonnull (completion_keys);
+  g_assert_true (emit_key (completion_keys, GDK_KEY_Return, 0));
   updated = get_buffer_text (buffer);
-  g_assert_cmpstr (updated, ==, "--\nSlide\n[duration=]");
-  gtk_text_buffer_get_iter_at_mark (buffer,
-                                    &iter,
-                                    gtk_text_buffer_get_insert (buffer));
-  g_assert_cmpint (gtk_text_iter_get_offset (&iter), ==,
-                   (int) strlen (updated) - 1);
+  g_assert_cmpstr (updated, ==, "-- [duration=");
+
+  gtk_text_buffer_set_text (buffer, "-- [vis", -1);
+  gtk_text_buffer_get_end_iter (buffer, &iter);
+  gtk_text_buffer_place_cursor (buffer, &iter);
+  g_assert_true (emit_key (keys, GDK_KEY_space, GDK_CONTROL_MASK));
+  run_loop_for (50);
+  completion_list = find_completion_list (GTK_WIDGET (popover));
+  completion_row = find_completion_row (completion_list, "Asset: visual.png");
+  g_assert_nonnull (completion_row);
+  gtk_list_box_select_row (completion_list, completion_row);
+  g_clear_object (&completion_keys);
+  completion_keys = find_key_controller (GTK_WIDGET (completion_list));
+  g_assert_nonnull (completion_keys);
+  g_assert_true (emit_key (completion_keys, GDK_KEY_Return, 0));
+  g_clear_pointer (&updated, g_free);
+  updated = get_buffer_text (buffer);
+  g_assert_cmpstr (updated, ==, "-- [visual.png]");
 
   gtk_text_buffer_set_text (buffer, two_slides, -1);
   gtk_text_buffer_get_end_iter (buffer, &iter);
@@ -593,6 +647,7 @@ assert_completion_and_shortcuts (PpEditorModuleCreateFunc create_editor,
   gtk_window_destroy (window);
   run_loop_for (50);
   g_clear_object (&keys);
+  g_clear_object (&completion_keys);
   g_clear_pointer (&state->launch_source, g_free);
   g_clear_object (&state->launch_file);
   g_assert_cmpint (g_remove (path), ==, 0);

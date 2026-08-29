@@ -34,6 +34,10 @@ static const char *const mode_values[] = { "both", "in", "out", NULL };
 static const char *const easing_values[] = {
   "linear", "ease-in", "ease-out", "ease-in-out", NULL
 };
+static const char *const pango_tags[] = {
+  "markup", "span", "b", "big", "i", "s", "sub", "sup", "small",
+  "tt", "u", NULL
+};
 
 static void
 source_slide_free (PpSourceSlide *slide)
@@ -344,6 +348,211 @@ pp_source_setting_values (const char *name)
   if (g_str_equal (name, "transition-easing="))
     return easing_values;
   return NULL;
+}
+
+void
+pp_source_completion_free (PpSourceCompletion *completion)
+{
+  if (completion == NULL)
+    return;
+  g_free (completion->label);
+  g_free (completion->insert_text);
+  g_free (completion->detail);
+  g_free (completion);
+}
+
+static gint
+compare_strings (gconstpointer a,
+                 gconstpointer b)
+{
+  return g_strcmp0 (*(char * const *) a, *(char * const *) b);
+}
+
+GPtrArray *
+pp_source_list_assets (GFile *file)
+{
+  GPtrArray *assets = g_ptr_array_new_with_free_func (g_free);
+  g_autoptr (GFile) parent = NULL;
+  g_autoptr (GFileEnumerator) enumerator = NULL;
+
+  if (file == NULL)
+    return assets;
+  parent = g_file_get_parent (file);
+  if (parent == NULL)
+    return assets;
+  enumerator = g_file_enumerate_children (parent,
+                                          G_FILE_ATTRIBUTE_STANDARD_NAME ","
+                                          G_FILE_ATTRIBUTE_STANDARD_TYPE,
+                                          G_FILE_QUERY_INFO_NONE,
+                                          NULL,
+                                          NULL);
+  if (enumerator == NULL)
+    return assets;
+  for (;;)
+    {
+      g_autoptr (GFileInfo) info = g_file_enumerator_next_file (enumerator,
+                                                                 NULL,
+                                                                 NULL);
+      const char *name;
+
+      if (info == NULL)
+        break;
+      name = g_file_info_get_name (info);
+      if (g_file_info_get_file_type (info) == G_FILE_TYPE_REGULAR &&
+          !g_str_has_suffix (name, ".pin"))
+        g_ptr_array_add (assets, g_strdup (name));
+    }
+  g_ptr_array_sort (assets, compare_strings);
+  return assets;
+}
+
+static void
+add_completion (GPtrArray  *completions,
+                const char *label,
+                const char *insert_text,
+                const char *detail,
+                gsize       replace_start,
+                guint       cursor_back,
+                const char *prefix)
+{
+  PpSourceCompletion *completion;
+
+  if (prefix != NULL && *prefix != '\0' &&
+      !g_str_has_prefix (label, prefix) &&
+      !g_str_has_prefix (insert_text, prefix))
+    return;
+  completion = g_new0 (PpSourceCompletion, 1);
+  completion->label = g_strdup (label);
+  completion->insert_text = g_strdup (insert_text);
+  completion->detail = g_strdup (detail);
+  completion->replace_start = replace_start;
+  completion->cursor_back = cursor_back;
+  g_ptr_array_add (completions, completion);
+}
+
+static gsize
+line_end_at (const char *source,
+             gsize       length,
+             gsize       offset)
+{
+  gsize end = MIN (offset, length);
+
+  while (end < length && source[end] != '\n')
+    end++;
+  return end;
+}
+
+GPtrArray *
+pp_source_complete (const char *source,
+                    GFile      *file,
+                    gsize       offset)
+{
+  GPtrArray *completions;
+  gsize length;
+  gsize line_start;
+  gsize line_end;
+  gsize open = G_MAXSIZE;
+
+  g_return_val_if_fail (source != NULL, NULL);
+  g_return_val_if_fail (file == NULL || G_IS_FILE (file), NULL);
+  length = strlen (source);
+  offset = MIN (offset, length);
+  completions = g_ptr_array_new_with_free_func ((GDestroyNotify) pp_source_completion_free);
+  line_start = offset;
+  while (line_start > 0 && source[line_start - 1] != '\n')
+    line_start--;
+  line_end = line_end_at (source, length, offset);
+  for (gsize cursor = line_start; cursor < offset; cursor++)
+    if (source[cursor] == '[')
+      open = cursor;
+    else if (source[cursor] == ']')
+      open = G_MAXSIZE;
+
+  if (open != G_MAXSIZE)
+    {
+      const char *token = source + open + 1;
+      gsize token_length = offset - open - 1;
+      const char *equals = memchr (token, '=', token_length);
+      gboolean has_closing = offset < line_end && source[offset] == ']';
+
+      if (equals != NULL)
+        {
+          g_autofree char *name = g_strndup (token, equals - token + 1);
+          const char *const *values = pp_source_setting_values (name);
+          const char *prefix = equals + 1;
+          gsize replace_start = open + 1 + (equals - token) + 1;
+
+          if (values != NULL)
+            for (guint i = 0; values[i] != NULL; i++)
+              {
+                g_autofree char *insertion = g_strdup_printf ("%s%s", values[i],
+                                                               has_closing ? "" : "]");
+                add_completion (completions, values[i], insertion, "valid value",
+                                replace_start, 0, prefix);
+              }
+        }
+      else
+        {
+          g_autofree char *prefix = g_strndup (token, token_length);
+
+          for (guint i = 0; setting_names[i] != NULL; i++)
+            add_completion (completions, setting_names[i], setting_names[i],
+                            "slide setting", open + 1, 0, prefix);
+          if (file != NULL)
+            {
+              g_autoptr (GPtrArray) assets = pp_source_list_assets (file);
+
+              for (guint i = 0; i < assets->len; i++)
+                {
+                  const char *asset = g_ptr_array_index (assets, i);
+                  g_autofree char *label = g_strdup_printf ("Asset: %s", asset);
+                  g_autofree char *insertion = g_strdup_printf ("%s%s", asset,
+                                                                 has_closing ? "" : "]");
+                  add_completion (completions, label, insertion, "relative asset",
+                                  open + 1, 0, prefix);
+                }
+            }
+        }
+      return completions;
+    }
+
+  for (gsize cursor = line_start; cursor < offset; cursor++)
+    if (source[cursor] == '<')
+      open = cursor;
+    else if (source[cursor] == '>')
+      open = G_MAXSIZE;
+  if (open != G_MAXSIZE)
+    {
+      g_autofree char *prefix = g_strndup (source + open + 1, offset - open - 1);
+      gboolean has_closing = offset < line_end && source[offset] == '>';
+
+      for (guint i = 0; pango_tags[i] != NULL; i++)
+        {
+          g_autofree char *insertion = g_strdup_printf ("%s></%s%s",
+                                                         pango_tags[i], pango_tags[i],
+                                                         has_closing ? "" : ">");
+          g_autofree char *closing = g_strdup_printf ("</%s%s", pango_tags[i],
+                                                       has_closing ? "" : ">");
+          add_completion (completions, pango_tags[i], insertion, "Pango markup",
+                          open + 1, g_utf8_strlen (closing, -1), prefix);
+        }
+      return completions;
+    }
+
+  if (source[line_start] == '#')
+    {
+      add_completion (completions, "Visual description", "#@alt:",
+                      "speaker-view visual description", line_start, 0,
+                      source + line_start);
+      return completions;
+    }
+  add_completion (completions, "New slide", "\n--\n", "slide separator",
+                  offset, 0, NULL);
+  add_completion (completions, "Speaker note", "\n#", "speaker-view note",
+                  offset, 0, NULL);
+  add_completion (completions, "Visual description", "\n#@alt:",
+                  "speaker-view visual description", offset, 0, NULL);
+  return completions;
 }
 
 static char *

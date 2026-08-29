@@ -1,10 +1,12 @@
 # Command-line interface
 
-Pinpoint retains the original 0.1.8 presentation options and adds scriptable
-checking and PDF controls. A valid historical invocation remains valid:
+Pinpoint is Flatpak-first. Invoke the installed application through its app ID;
+the inner `pinpoint` options retain the original 0.1.8 presentation options and
+add scriptable checking and PDF controls:
 
 ```sh
-pinpoint [--maximized] [--fullscreen] [--speakermode] [--rehearse] \
+flatpak run --user com.nedrichards.pinpoint \
+  [--maximized] [--fullscreen] [--speakermode] [--rehearse] \
   [--ignore-comments] presentation.pin
 ```
 
@@ -15,8 +17,8 @@ the additional paths.
 Open an existing deck in composition mode, or start an untitled deck, with:
 
 ```sh
-pinpoint --edit presentation.pin
-pinpoint --edit
+flatpak run --user com.nedrichards.pinpoint --edit presentation.pin
+flatpak run --user com.nedrichards.pinpoint --edit
 ```
 
 Composition mode cannot be combined with checking, PDF output, rehearsal,
@@ -24,8 +26,9 @@ speaker mode, or presentation fullscreen options. GtkSourceView lives in an
 optional module and is loaded only for this mode; a presenter-only build gives
 a clear error when `--edit` is requested.
 
-Use `--version` for the installed version and `--help` for the complete option
-list.
+Append `--version` for the installed version and `--help` for the complete
+option list. A native installation may invoke its installed `pinpoint` binary
+directly, but documentation and integrations should prefer the Flatpak form.
 
 ## Camera backgrounds
 
@@ -46,7 +49,7 @@ settings when that environment offers a choice.
 CI, and packaging workflows:
 
 ```sh
-pinpoint --check presentation.pin
+flatpak run --user com.nedrichards.pinpoint --check presentation.pin
 ```
 
 It verifies that the source is readable UTF-8, parses it with the same
@@ -60,12 +63,20 @@ A successful check prints the slide count and exits 0. A read, parse, missing
 asset, or custom-transition error is written to standard error and exits 1.
 `--check` cannot be combined with `--output`.
 
+## Format assistance for editors
+
+`--format-assist=diagnostics`, `symbols`, `assets` or `completions` emits a
+read-only JSON object for external editor integrations. `completions` also
+requires `--complete-position=LINE:COLUMN`. It never presents, saves, executes
+commands or activates media. See [Format intelligence](format-intelligence.md)
+for the stable response schema and examples.
+
 ## PDF export
 
 PDF export is non-interactive when `--output` is present:
 
 ```sh
-pinpoint --output=talk.pdf --pdf-page-size=a4 \
+flatpak run --user com.nedrichards.pinpoint --output=talk.pdf --pdf-page-size=a4 \
   --pdf-orientation=landscape --pdf-no-speaker-notes talk.pin
 ```
 

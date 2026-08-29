@@ -651,6 +651,77 @@ test_check_argument_errors (void)
 }
 
 static void
+test_format_assist (void)
+{
+  g_autofree char *directory = g_dir_make_tmp ("pinpoint-format-assist-XXXXXX",
+                                               NULL);
+  g_autofree char *presentation = g_build_filename (directory,
+                                                    "completion.pin",
+                                                    NULL);
+  g_autoptr (GError) error = NULL;
+  const char *arguments[] = {
+    pinpoint_path,
+    "--format-assist=completions",
+    "--complete-position=1:17",
+    presentation,
+    NULL,
+  };
+  g_autoptr (GSubprocess) process = NULL;
+  g_autofree char *stdout_text = NULL;
+
+  g_assert_true (g_file_set_contents (presentation,
+                                      "-- [text-align=c",
+                                      -1,
+                                      &error));
+  g_assert_no_error (error);
+  process = launch_application (arguments);
+  g_autofree char *stderr_text = finish_process_with_stdout (process,
+                                                             EXIT_SUCCESS,
+                                                             &stdout_text);
+  g_assert_cmpstr (stderr_text, ==, "");
+  g_assert_nonnull (strstr (stdout_text, "\"version\":1"));
+  g_assert_nonnull (strstr (stdout_text, "\"kind\":\"completions\""));
+  g_assert_nonnull (strstr (stdout_text, "\"label\":\"center\""));
+  g_assert_nonnull (strstr (stdout_text, "\"replace_start\":15"));
+  g_assert_cmpint (g_remove (presentation), ==, 0);
+  g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+static void
+test_format_assist_argument_errors (void)
+{
+  const char *missing_position_arguments[] = {
+    pinpoint_path,
+    "--format-assist=completions",
+    presentation_path,
+    NULL,
+  };
+  const char *unexpected_position_arguments[] = {
+    pinpoint_path,
+    "--format-assist=diagnostics",
+    "--complete-position=1:1",
+    presentation_path,
+    NULL,
+  };
+  g_autoptr (GSubprocess) missing_position_process = launch_application (
+    missing_position_arguments);
+  g_autofree char *missing_position_stderr = finish_process (
+    missing_position_process,
+    EXIT_FAILURE);
+  g_autoptr (GSubprocess) unexpected_position_process = launch_application (
+    unexpected_position_arguments);
+  g_autofree char *unexpected_position_stderr = finish_process (
+    unexpected_position_process,
+    EXIT_FAILURE);
+
+  g_assert_nonnull (strstr (missing_position_stderr,
+                            "requires --complete-position"));
+  g_assert_nonnull (strstr (unexpected_position_stderr,
+                            "--complete-position requires "
+                            "--format-assist=completions"));
+}
+
+static void
 test_software_renderer_is_rejected (void)
 {
   const char *arguments[] = { pinpoint_path, presentation_path, NULL };
@@ -1013,6 +1084,9 @@ main (int   argc,
                    test_multiple_presentations_are_rejected);
   g_test_add_func ("/application/check-argument-errors",
                    test_check_argument_errors);
+  g_test_add_func ("/application/format-assist", test_format_assist);
+  g_test_add_func ("/application/format-assist-argument-errors",
+                   test_format_assist_argument_errors);
   g_test_add_func ("/application/edit-argument-errors",
                    test_edit_argument_errors);
   g_test_add_func ("/application/editor-startup-shutdown",

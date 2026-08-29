@@ -4,7 +4,7 @@ Composition mode is Pinpoint's focused `.pin` editing environment. Open it
 with **New Presentation**, **Edit** on a selected deck, or:
 
 ```sh
-pinpoint --edit talk.pin
+flatpak run --user com.nedrichards.pinpoint --edit talk.pin
 ```
 
 Opening the bundled introduction in the editor first creates an editable copy,
@@ -31,11 +31,14 @@ cannot be parsed, Pinpoint keeps the last valid preview and labels it paused
 until the source is valid again.
 
 Warnings underline malformed brackets, unknown keyed settings, invalid enum
-values, and invalid numeric values. Ctrl+Space offers settings, enumerated
-values, files beside the presentation, slide separators, speaker notes, and
-visual-description directives. File completion becomes available after the
-deck has a saved location. The status line summarizes slides and problems;
-hover it for the first diagnostic.
+values, and invalid numeric values. Ctrl+Space manually opens contextual
+completion: settings and their valid values inside brackets, nearby assets for
+backgrounds, Pango tags after `<`, and slide/note/visual-description helpers
+elsewhere. Use Up/Down, Enter or Tab, and Escape without leaving the keyboard.
+File completion becomes available after the deck has a saved location. The
+status line summarizes slides and problems; hover it for the first diagnostic.
+The exact contract is also available to external editors and terminal tools in
+[Format intelligence](format-intelligence.md).
 
 Syntax colour reinforces the format without turning slide prose into code:
 slide separators and commands are blue, settings and defaults are orange, Pango

@@ -4,6 +4,22 @@ This file contains only open or intentionally deferred work. Completed behavior
 is recorded in [docs/compatibility.md](docs/compatibility.md), with detailed
 history in Git.
 
+## Format intelligence and external editing
+
+Status: in progress. The composition editor now provides manual,
+context-aware completion and exposes the same format knowledge through a JSON
+command contract. The remaining work is distribution and wider-editor
+validation, not a second parser.
+
+- Keep `--format-assist` JSON output and the in-app completion candidates in
+  lockstep, with focused parser tests for every new directive or setting.
+- Exercise the bundled VS Code, Vim and Emacs integrations against released
+  editor versions, then publish the stable pieces through their normal
+  registries/upstreams.
+- Consider an LSP only after the command contract has demonstrated that the
+  existing editor integrations need a long-running transport. Do not duplicate
+  Pinpoint's parser or add unsolicited prose generation.
+
 ## Remote-control device evaluation
 
 Status: desktop MPRIS behavior and the bundled browser prototype are complete;

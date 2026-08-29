@@ -26,6 +26,18 @@ typedef struct
   char *title;
 } PpSourceSlide;
 
+/* A completion replaces source[replace_start:offset].  cursor_back is counted
+ * in UTF-8 characters from the end of insert_text, so a client can place the
+ * insertion cursor inside a paired markup snippet without guessing. */
+typedef struct
+{
+  char *label;
+  char *insert_text;
+  char *detail;
+  gsize replace_start;
+  guint cursor_back;
+} PpSourceCompletion;
+
 typedef struct _PpSourceAnalysis PpSourceAnalysis;
 
 PpSourceAnalysis *pp_source_analyze (const char *source,
@@ -42,6 +54,12 @@ const PpSourceDiagnostic *pp_source_analysis_get_diagnostic (const PpSourceAnaly
 
 const char *const *pp_source_setting_names (void);
 const char *const *pp_source_setting_values (const char *name);
+
+GPtrArray *pp_source_complete (const char *source,
+                               GFile      *file,
+                               gsize       offset);
+void       pp_source_completion_free (PpSourceCompletion *completion);
+GPtrArray *pp_source_list_assets (GFile *file);
 
 char *pp_source_apply_durations (const char   *source,
                                  const double *durations,

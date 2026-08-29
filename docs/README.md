@@ -10,6 +10,8 @@ authoritative home.
   asset-resolution reference.
 - [Composition editor](composition-editor.md) — source-first editing, preview,
   saving, diagnostics, and integrated rehearsal.
+- [Format intelligence](format-intelligence.md) — keyboard-first completion,
+  diagnostics, and the external-editor JSON contract.
 - [External editors](external-editors.md) — live reload and GtkSourceView
   language support outside Pinpoint.
 - [Command line](command-line.md) — stable options, exit statuses, PDF export,
