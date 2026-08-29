@@ -84,12 +84,12 @@ slide, next slide, notes, and timing information.
 Run a deck directly with:
 
 ```sh
-pinpoint talk.pin
+flatpak run --user com.nedrichards.pinpoint talk.pin
 ```
 
-Use `pinpoint --edit [talk.pin]` to open composition mode, or `pinpoint --help`
-for presentation, rehearsal, validation, camera, and PDF-export options. The
-stable command-line contract is documented in
+Use `flatpak run --user com.nedrichards.pinpoint --edit [talk.pin]` to open
+composition mode, or append `--help` for presentation, rehearsal, validation,
+camera, and PDF-export options. The stable command-line contract is documented in
 [docs/command-line.md](docs/command-line.md).
 
 ## Development

@@ -148,7 +148,7 @@ background, preserving the original format.
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `[stage-color=COLOR]` | Base stage color shown behind fitted or missing media | `black` on screen; `white` for PDF |
+| `[stage-color=COLOR]` | Base stage color shown behind fitted or missing media | `black` when presenting; `white` for PDF |
 | `[font=DESCRIPTION]` | [Pango font description][pango-font-description] for audience text | `Sans 60px` |
 | `[text-color=COLOR]` | Audience text color | `white` |
 | `[text-align=left\|center\|right]` | Alignment within multiline text | `left` |
@@ -160,6 +160,12 @@ background, preserving the original format.
 Colors use GTK color syntax. Common names such as `black`, `white`, and `red`,
 hex values such as `#3584e4`, and CSS-style forms such as `rgb(53,132,228)` are
 accepted.
+
+If a presentation does not set `stage-color`, Pinpoint uses black for the
+main presentation display and white when exporting a PDF. This is intentional:
+it keeps the historical on-screen default while giving fitted 4:3 media white
+letterboxing on a PDF page. An explicit `stage-color` overrides the default in
+both contexts.
 
 Text keeps a five-percent stage margin. It is reduced when necessary to fit at
 most 80 percent of the stage, but a small text layout is not enlarged.
@@ -414,7 +420,7 @@ that has notes. Comment-derived notes can be included or ignored independently.
 The equivalent CLI form is:
 
 ```sh
-pinpoint --output=talk.pdf --pdf-page-size=a4 \
+flatpak run --user com.nedrichards.pinpoint --output=talk.pdf --pdf-page-size=a4 \
   --pdf-orientation=landscape talk.pin
 ```
 
