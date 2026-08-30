@@ -54,8 +54,10 @@ typedef struct
   AdwSwitchRow *setup_speaker;
   AdwSwitchRow *setup_ignore_comments;
   AdwComboRow *setup_audience_monitor;
-  GtkWidget *setup_selected_section;
-  AdwActionRow *setup_selected_row;
+  GtkStack *setup_stack;
+  GtkWidget *setup_back_button;
+  GtkLabel *setup_selected_title;
+  GtkLabel *setup_selected_details;
   AdwBanner *welcome_banner;
   GPtrArray *setup_monitor_choices;
   PpSpeaker *speaker;
@@ -122,6 +124,8 @@ static gboolean update_selected_presentation (Pinpoint *pinpoint);
 static void set_selected_actions_enabled (Pinpoint *pinpoint,
                                           gboolean  selected,
                                           gboolean  presentable);
+static void show_setup_page (Pinpoint   *pinpoint,
+                             const char *page_name);
 static void view_bundled_introduction (Pinpoint *pinpoint);
 static gboolean show_editor (Pinpoint *pinpoint,
                              GFile    *file);
@@ -1487,15 +1491,13 @@ export_selected_presentation (Pinpoint *pinpoint)
   g_autofree char *body = g_strdup_printf (
     "Choose how “%s” should be exported.", basename);
   AdwAlertDialog *dialog = ADW_ALERT_DIALOG (
-    adw_alert_dialog_new ("Export to PDF", body));
+    adw_alert_dialog_new ("Choose PDF Output Options", body));
   GtkWidget *group = adw_preferences_group_new ();
   AdwComboRow *paper_size = ADW_COMBO_ROW (adw_combo_row_new ());
   AdwComboRow *orientation = ADW_COMBO_ROW (adw_combo_row_new ());
   AdwSwitchRow *speaker_notes = ADW_SWITCH_ROW (adw_switch_row_new ());
   AdwSwitchRow *comment_notes = ADW_SWITCH_ROW (adw_switch_row_new ());
 
-  adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group),
-                                   "Document");
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (paper_size),
                                  "Paper Size");
   adw_combo_row_set_model (paper_size, G_LIST_MODEL (paper_size_model));
@@ -1536,7 +1538,9 @@ export_selected_presentation (Pinpoint *pinpoint)
 
   adw_alert_dialog_set_extra_child (dialog, group);
   adw_alert_dialog_add_response (dialog, "cancel", "Cancel");
-  adw_alert_dialog_add_response (dialog, "export", "Continue");
+  adw_alert_dialog_add_response (dialog,
+                                 "export",
+                                 "Choose PDF Destination…");
   adw_alert_dialog_set_close_response (dialog, "cancel");
   adw_alert_dialog_set_default_response (dialog, "export");
   adw_alert_dialog_set_response_appearance (dialog,
@@ -1571,10 +1575,22 @@ use_selected_presentation (Pinpoint *pinpoint)
     {
       g_clear_object (&pinpoint->file);
       set_window_title (pinpoint);
-      if (pinpoint->setup_selected_section != NULL)
-        gtk_widget_set_visible (pinpoint->setup_selected_section, FALSE);
+      show_setup_page (pinpoint, "welcome");
       set_selected_actions_enabled (pinpoint, FALSE, FALSE);
     }
+}
+
+static void
+show_setup_page (Pinpoint   *pinpoint,
+                 const char *page_name)
+{
+  if (pinpoint->setup_stack == NULL)
+    return;
+
+  gtk_stack_set_visible_child_name (pinpoint->setup_stack, page_name);
+  if (pinpoint->setup_back_button != NULL)
+    gtk_widget_set_visible (pinpoint->setup_back_button,
+                            g_str_equal (page_name, "selected"));
 }
 
 static gboolean
@@ -1582,16 +1598,15 @@ update_selected_presentation (Pinpoint *pinpoint)
 {
   g_autoptr (PpPresentationInfo) info = NULL;
 
-  if (pinpoint->setup_selected_section == NULL || pinpoint->file == NULL)
+  if (pinpoint->setup_selected_title == NULL || pinpoint->file == NULL)
     return FALSE;
 
   info = pp_presentation_info_new (pinpoint->file,
                                    pinpoint->ignore_comments);
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (pinpoint->setup_selected_row),
-                                 pp_presentation_info_get_name (info));
-  adw_action_row_set_subtitle (pinpoint->setup_selected_row,
-                               pp_presentation_info_get_details (info));
-  gtk_widget_set_visible (pinpoint->setup_selected_section, TRUE);
+  gtk_label_set_text (pinpoint->setup_selected_title,
+                      pp_presentation_info_get_name (info));
+  gtk_label_set_text (pinpoint->setup_selected_details,
+                      pp_presentation_info_get_details (info));
   return pp_presentation_info_is_presentable (info);
 }
 
@@ -1610,6 +1625,7 @@ select_presentation (Pinpoint *pinpoint,
     adw_banner_set_revealed (pinpoint->welcome_banner, FALSE);
   presentable = update_selected_presentation (pinpoint);
   set_selected_actions_enabled (pinpoint, TRUE, presentable);
+  show_setup_page (pinpoint, "selected");
 }
 
 static void
@@ -2325,6 +2341,16 @@ about_action_cb (GSimpleAction *action,
   adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (pinpoint->window));
 }
 
+static void
+setup_back_clicked_cb (GtkButton *button,
+                       gpointer   user_data)
+{
+  Pinpoint *pinpoint = user_data;
+
+  (void) button;
+  show_setup_page (pinpoint, "welcome");
+}
+
 static GtkWidget *
 create_setup_view (Pinpoint *pinpoint)
 {
@@ -2348,33 +2374,50 @@ create_setup_view (Pinpoint *pinpoint)
   g_autoptr (GMenu) menu = g_menu_new ();
   GtkWidget *toolbar = adw_toolbar_view_new ();
   GtkWidget *header = adw_header_bar_new ();
+  GtkWidget *header_title = adw_window_title_new ("Pinpoint", NULL);
+  GtkWidget *back = gtk_button_new_from_icon_name ("go-previous-symbolic");
   GtkWidget *menu_button = gtk_menu_button_new ();
+  GtkWidget *pages = gtk_stack_new ();
   GtkWidget *scrolled = gtk_scrolled_window_new ();
   GtkWidget *clamp = adw_clamp_new ();
-  GtkWidget *content = gtk_box_new (GTK_ORIENTATION_VERTICAL, 18);
+  GtkWidget *content = gtk_box_new (GTK_ORIENTATION_VERTICAL, 24);
   GtkWidget *hero = gtk_box_new (GTK_ORIENTATION_VERTICAL, 10);
   GtkWidget *hero_icon = gtk_image_new_from_icon_name (icon_name);
   GtkWidget *hero_title = gtk_label_new ("Open a Presentation");
-  GtkWidget *hero_description = gtk_label_new (
-    "Choose a folder containing a .pin file and its assets.");
+  GtkWidget *hero_description = gtk_label_new (PINPOINT_TAGLINE);
   GtkWidget *welcome_banner = adw_banner_new (
     "New to Pinpoint? Open a folder, edit its .pin file, and Pinpoint reloads it live.");
   GtkWidget *learn_group = adw_preferences_group_new ();
   GtkWidget *learn_row = adw_action_row_new ();
   GtkWidget *learn_icon = gtk_image_new_from_icon_name (
     "help-contents-symbolic");
-  GtkWidget *view_introduction = gtk_button_new_with_label ("View");
+  GtkWidget *view_introduction = gtk_button_new_from_icon_name (
+    "media-playback-start-symbolic");
   GtkWidget *save_introduction = gtk_button_new_from_icon_name (
     "document-save-symbolic");
-  GtkWidget *edit_introduction = gtk_button_new_with_label ("Open in Editor…");
+  GtkWidget *edit_introduction = gtk_button_new_from_icon_name (
+    "go-next-symbolic");
   GtkWidget *edit_introduction_row = adw_action_row_new ();
   GtkWidget *group = adw_preferences_group_new ();
-  GtkWidget *buttons = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
-  GtkWidget *open = gtk_button_new_with_label ("Present from Folder…");
-  GtkWidget *new_presentation = gtk_button_new_with_label ("New Presentation");
-  GtkWidget *selected_section = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
-  GtkWidget *selected_group = adw_preferences_group_new ();
+  GtkWidget *start_group = adw_preferences_group_new ();
+  GtkWidget *open_row = adw_action_row_new ();
+  GtkWidget *open_icon = gtk_image_new_from_icon_name ("folder-open-symbolic");
+  GtkWidget *open = gtk_button_new_from_icon_name ("go-next-symbolic");
+  GtkWidget *new_row = adw_action_row_new ();
+  GtkWidget *new_icon = gtk_image_new_from_icon_name ("document-new-symbolic");
+  GtkWidget *new_presentation = gtk_button_new_from_icon_name (
+    "go-next-symbolic");
+  GtkWidget *selected_scrolled = gtk_scrolled_window_new ();
+  GtkWidget *selected_clamp = adw_clamp_new ();
+  GtkWidget *selected_section = gtk_box_new (GTK_ORIENTATION_VERTICAL, 24);
+  GtkWidget *selected_hero = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
+  GtkWidget *selected_icon = gtk_image_new_from_icon_name (
+    "x-office-presentation-symbolic");
+  GtkWidget *selected_status = gtk_label_new ("Ready to Present");
+  GtkWidget *selected_title = gtk_label_new (NULL);
+  GtkWidget *selected_details = gtk_label_new (NULL);
   GtkWidget *selected_actions = gtk_flow_box_new ();
+  AdwExpanderRow *options = ADW_EXPANDER_ROW (adw_expander_row_new ());
   GtkWidget *selected_file_actions = adw_preferences_group_new ();
   GtkWidget *present = gtk_button_new_with_label ("Present");
   GtkWidget *rehearse = gtk_button_new_with_label ("Rehearse");
@@ -2418,24 +2461,42 @@ create_setup_view (Pinpoint *pinpoint)
                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
                                   "Main Menu",
                                   -1);
+  gtk_widget_set_tooltip_text (back, "Back to Start");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (back),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Back to Start",
+                                  -1);
+  gtk_widget_add_css_class (back, "flat");
+  gtk_widget_set_visible (back, FALSE);
+  g_signal_connect (back,
+                    "clicked",
+                    G_CALLBACK (setup_back_clicked_cb),
+                    pinpoint);
+  pinpoint->setup_back_button = back;
+  adw_header_bar_set_title_widget (ADW_HEADER_BAR (header), header_title);
+  adw_header_bar_pack_start (ADW_HEADER_BAR (header), back);
   adw_header_bar_pack_end (ADW_HEADER_BAR (header), menu_button);
   adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar), header);
-  adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar), scrolled);
+  adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar), pages);
+  pinpoint->setup_stack = GTK_STACK (pages);
+  gtk_stack_set_transition_type (pinpoint->setup_stack,
+                                 GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
+  gtk_stack_set_transition_duration (pinpoint->setup_stack, 250);
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scrolled),
                                   GTK_POLICY_NEVER,
                                   GTK_POLICY_AUTOMATIC);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scrolled), clamp);
-  adw_clamp_set_maximum_size (ADW_CLAMP (clamp), 640);
+  adw_clamp_set_maximum_size (ADW_CLAMP (clamp), 680);
   adw_clamp_set_child (ADW_CLAMP (clamp), content);
+  gtk_widget_set_valign (content, GTK_ALIGN_START);
   gtk_widget_set_margin_start (content, 24);
   gtk_widget_set_margin_end (content, 24);
-  gtk_widget_set_margin_top (content, 8);
-  gtk_widget_set_margin_bottom (content, 18);
+  gtk_widget_set_margin_top (content, 32);
+  gtk_widget_set_margin_bottom (content, 32);
 
   gtk_widget_set_halign (hero, GTK_ALIGN_CENTER);
-  gtk_widget_set_margin_top (hero, 2);
+  gtk_widget_set_margin_bottom (hero, 8);
   gtk_image_set_pixel_size (GTK_IMAGE (hero_icon), 64);
-  gtk_widget_add_css_class (hero_icon, "accent");
   gtk_widget_add_css_class (hero_title, "title-1");
   gtk_widget_add_css_class (hero_description, "dim-label");
   gtk_label_set_wrap (GTK_LABEL (hero_description), TRUE);
@@ -2459,27 +2520,85 @@ create_setup_view (Pinpoint *pinpoint)
                     pinpoint);
   gtk_box_append (GTK_BOX (content), welcome_banner);
 
-  gtk_box_set_homogeneous (GTK_BOX (buttons), TRUE);
-  gtk_widget_set_hexpand (open, TRUE);
-  gtk_widget_set_hexpand (new_presentation, TRUE);
-  gtk_widget_add_css_class (open, "suggested-action");
-  gtk_widget_add_css_class (open, "pill");
-  gtk_widget_add_css_class (new_presentation, "pill");
-  gtk_box_append (GTK_BOX (buttons), open);
-  gtk_box_append (GTK_BOX (buttons), new_presentation);
-  gtk_box_append (GTK_BOX (content), buttons);
+  adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (start_group),
+                                   "Start");
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (open_row),
+                                 "Open Presentation…");
+  adw_action_row_set_subtitle (
+    ADW_ACTION_ROW (open_row),
+    "Choose a folder containing a .pin file and its assets");
+  gtk_widget_add_css_class (open_icon, "dim-label");
+  adw_action_row_add_prefix (ADW_ACTION_ROW (open_row), open_icon);
+  gtk_widget_add_css_class (open, "flat");
+  gtk_widget_set_valign (open, GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text (open, "Open Presentation");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (open),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Open Presentation",
+                                  -1);
+  adw_action_row_add_suffix (ADW_ACTION_ROW (open_row), open);
+  adw_action_row_set_activatable_widget (ADW_ACTION_ROW (open_row), open);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (start_group), open_row);
   g_signal_connect (open,
                     "clicked",
                     G_CALLBACK (open_presentation_clicked_cb),
                     pinpoint);
+
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (new_row),
+                                 "New Presentation");
+  adw_action_row_set_subtitle (
+    ADW_ACTION_ROW (new_row),
+    "Start with a blank slide in the composition editor");
+  gtk_widget_add_css_class (new_icon, "dim-label");
+  adw_action_row_add_prefix (ADW_ACTION_ROW (new_row), new_icon);
+  gtk_widget_add_css_class (new_presentation, "flat");
+  gtk_widget_set_valign (new_presentation, GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text (new_presentation, "New Presentation");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (new_presentation),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "New Presentation",
+                                  -1);
   gtk_actionable_set_action_name (GTK_ACTIONABLE (new_presentation),
                                   "win.new-presentation");
+  adw_action_row_add_suffix (ADW_ACTION_ROW (new_row), new_presentation);
+  adw_action_row_set_activatable_widget (ADW_ACTION_ROW (new_row),
+                                         new_presentation);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (start_group), new_row);
+  gtk_box_append (GTK_BOX (content), start_group);
 
-  pinpoint->setup_selected_section = selected_section;
-  pinpoint->setup_selected_row = ADW_ACTION_ROW (adw_action_row_new ());
-  adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (selected_group),
-                                   "Selected Presentation");
-  gtk_widget_set_visible (selected_section, FALSE);
+  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (selected_scrolled),
+                                  GTK_POLICY_NEVER,
+                                  GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (selected_scrolled),
+                                 selected_clamp);
+  adw_clamp_set_maximum_size (ADW_CLAMP (selected_clamp), 720);
+  adw_clamp_set_child (ADW_CLAMP (selected_clamp), selected_section);
+  gtk_widget_set_valign (selected_section, GTK_ALIGN_START);
+  gtk_widget_set_margin_start (selected_section, 24);
+  gtk_widget_set_margin_end (selected_section, 24);
+  gtk_widget_set_margin_top (selected_section, 28);
+  gtk_widget_set_margin_bottom (selected_section, 32);
+
+  gtk_widget_set_halign (selected_hero, GTK_ALIGN_CENTER);
+  gtk_image_set_pixel_size (GTK_IMAGE (selected_icon), 64);
+  gtk_widget_add_css_class (selected_icon, "accent");
+  gtk_widget_add_css_class (selected_status, "title-3");
+  gtk_widget_add_css_class (selected_status, "accent");
+  gtk_widget_add_css_class (selected_title, "title-1");
+  gtk_label_set_wrap (GTK_LABEL (selected_title), TRUE);
+  gtk_label_set_wrap_mode (GTK_LABEL (selected_title), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_max_width_chars (GTK_LABEL (selected_title), 44);
+  gtk_label_set_justify (GTK_LABEL (selected_title), GTK_JUSTIFY_CENTER);
+  gtk_widget_add_css_class (selected_details, "dim-label");
+  gtk_label_set_wrap (GTK_LABEL (selected_details), TRUE);
+  gtk_label_set_justify (GTK_LABEL (selected_details), GTK_JUSTIFY_CENTER);
+  pinpoint->setup_selected_title = GTK_LABEL (selected_title);
+  pinpoint->setup_selected_details = GTK_LABEL (selected_details);
+  gtk_box_append (GTK_BOX (selected_hero), selected_icon);
+  gtk_box_append (GTK_BOX (selected_hero), selected_status);
+  gtk_box_append (GTK_BOX (selected_hero), selected_title);
+  gtk_box_append (GTK_BOX (selected_hero), selected_details);
+  gtk_box_append (GTK_BOX (selected_section), selected_hero);
   gtk_flow_box_set_selection_mode (GTK_FLOW_BOX (selected_actions),
                                    GTK_SELECTION_NONE);
   gtk_flow_box_set_homogeneous (GTK_FLOW_BOX (selected_actions), TRUE);
@@ -2488,8 +2607,9 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_flow_box_set_column_spacing (GTK_FLOW_BOX (selected_actions), 6);
   gtk_flow_box_set_row_spacing (GTK_FLOW_BOX (selected_actions), 6);
   gtk_widget_set_hexpand (selected_actions, TRUE);
-  gtk_widget_add_css_class (present, "pill");
-  gtk_widget_add_css_class (rehearse, "pill");
+  gtk_widget_add_css_class (present, "suggested-action");
+  gtk_widget_set_size_request (present, -1, 52);
+  gtk_widget_set_size_request (rehearse, -1, 52);
   gtk_actionable_set_action_name (GTK_ACTIONABLE (present),
                                   "win.present-selected");
   gtk_actionable_set_action_name (GTK_ACTIONABLE (rehearse),
@@ -2498,6 +2618,7 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_widget_set_hexpand (rehearse, TRUE);
   gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), present, -1);
   gtk_flow_box_insert (GTK_FLOW_BOX (selected_actions), rehearse, -1);
+  gtk_box_append (GTK_BOX (selected_section), selected_actions);
 
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (edit_row),
                                  "Edit Presentation");
@@ -2539,27 +2660,24 @@ create_setup_view (Pinpoint *pinpoint)
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (selected_file_actions),
                              export_row);
 
-  adw_preferences_group_add (ADW_PREFERENCES_GROUP (selected_group),
-                             GTK_WIDGET (pinpoint->setup_selected_row));
-  gtk_box_append (GTK_BOX (selected_section), selected_group);
-  gtk_box_append (GTK_BOX (selected_section), selected_actions);
-  gtk_box_append (GTK_BOX (selected_section), selected_file_actions);
-  gtk_box_append (GTK_BOX (content), selected_section);
-  set_selected_actions_enabled (pinpoint, FALSE, FALSE);
-
   adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (learn_group),
-                                   "Need a Starting Point?");
+                                   "Learn Pinpoint");
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (learn_row),
-                                 "Introduction, Made with Pinpoint");
+                                 "Introduction");
   adw_action_row_set_subtitle (
     ADW_ACTION_ROW (learn_row),
-    "Explore the plain-text format, visuals, and controls");
+    "A short tour made with Pinpoint");
   gtk_widget_add_css_class (learn_icon, "dim-label");
   adw_action_row_add_prefix (ADW_ACTION_ROW (learn_row), learn_icon);
   gtk_actionable_set_action_name (GTK_ACTIONABLE (view_introduction),
                                   "win.view-introduction");
   gtk_widget_set_valign (view_introduction, GTK_ALIGN_CENTER);
-  gtk_widget_add_css_class (view_introduction, "pill");
+  gtk_widget_add_css_class (view_introduction, "flat");
+  gtk_widget_set_tooltip_text (view_introduction, "View Introduction");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (view_introduction),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "View Introduction",
+                                  -1);
   adw_action_row_add_suffix (ADW_ACTION_ROW (learn_row), view_introduction);
   gtk_actionable_set_action_name (GTK_ACTIONABLE (save_introduction),
                                   "win.save-introduction");
@@ -2579,21 +2697,33 @@ create_setup_view (Pinpoint *pinpoint)
   gtk_actionable_set_action_name (GTK_ACTIONABLE (edit_introduction),
                                   "win.edit-introduction");
   gtk_widget_set_valign (edit_introduction, GTK_ALIGN_CENTER);
-  gtk_widget_add_css_class (edit_introduction, "pill");
+  gtk_widget_add_css_class (edit_introduction, "flat");
+  gtk_widget_set_tooltip_text (edit_introduction,
+                               "Make an Editable Copy");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (edit_introduction),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Make an Editable Copy",
+                                  -1);
   adw_action_row_add_suffix (ADW_ACTION_ROW (edit_introduction_row),
                              edit_introduction);
+  adw_action_row_set_activatable_widget (
+    ADW_ACTION_ROW (edit_introduction_row), edit_introduction);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (learn_group),
                              edit_introduction_row);
-  adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group),
-                                   "Presentation Options");
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (options),
+                                 "Presentation Options");
+  adw_expander_row_set_subtitle (
+    options,
+    "Fullscreen, speaker view, comments and display");
+  adw_expander_row_set_expanded (options, TRUE);
   pinpoint->setup_fullscreen = ADW_SWITCH_ROW (adw_switch_row_new ());
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (pinpoint->setup_fullscreen),
                                  "Start Fullscreen");
   adw_action_row_set_subtitle (ADW_ACTION_ROW (pinpoint->setup_fullscreen),
                                "Use the audience display for the presentation");
   adw_switch_row_set_active (pinpoint->setup_fullscreen, pinpoint->fullscreen);
-  adw_preferences_group_add (ADW_PREFERENCES_GROUP (group),
-                             GTK_WIDGET (pinpoint->setup_fullscreen));
+  adw_expander_row_add_row (options,
+                            GTK_WIDGET (pinpoint->setup_fullscreen));
 
   pinpoint->setup_speaker = ADW_SWITCH_ROW (adw_switch_row_new ());
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (pinpoint->setup_speaker),
@@ -2601,8 +2731,7 @@ create_setup_view (Pinpoint *pinpoint)
   adw_action_row_set_subtitle (ADW_ACTION_ROW (pinpoint->setup_speaker),
                                "Show notes, previews, timing, and controls");
   adw_switch_row_set_active (pinpoint->setup_speaker, pinpoint->speaker_mode);
-  adw_preferences_group_add (ADW_PREFERENCES_GROUP (group),
-                             GTK_WIDGET (pinpoint->setup_speaker));
+  adw_expander_row_add_row (options, GTK_WIDGET (pinpoint->setup_speaker));
 
   pinpoint->setup_ignore_comments = ADW_SWITCH_ROW (adw_switch_row_new ());
   adw_preferences_row_set_title (
@@ -2613,8 +2742,8 @@ create_setup_view (Pinpoint *pinpoint)
     "Do not display comment lines as speaker notes");
   adw_switch_row_set_active (pinpoint->setup_ignore_comments,
                              pinpoint->ignore_comments);
-  adw_preferences_group_add (ADW_PREFERENCES_GROUP (group),
-                             GTK_WIDGET (pinpoint->setup_ignore_comments));
+  adw_expander_row_add_row (options,
+                            GTK_WIDGET (pinpoint->setup_ignore_comments));
 
   pinpoint->setup_audience_monitor = ADW_COMBO_ROW (adw_combo_row_new ());
   adw_preferences_row_set_title (
@@ -2628,14 +2757,27 @@ create_setup_view (Pinpoint *pinpoint)
                                             "string");
   adw_combo_row_set_expression (pinpoint->setup_audience_monitor, expression);
   gtk_expression_unref (expression);
-  adw_preferences_group_add (ADW_PREFERENCES_GROUP (group),
-                             GTK_WIDGET (pinpoint->setup_audience_monitor));
+  adw_expander_row_add_row (options,
+                            GTK_WIDGET (pinpoint->setup_audience_monitor));
   g_signal_connect (pinpoint->setup_audience_monitor,
                     "notify::selected",
                     G_CALLBACK (audience_monitor_selected_cb),
                     pinpoint);
-  gtk_box_append (GTK_BOX (content), group);
   gtk_box_append (GTK_BOX (content), learn_group);
+  gtk_stack_add_named (pinpoint->setup_stack, scrolled, "welcome");
+
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (group),
+                             GTK_WIDGET (options));
+  gtk_box_append (GTK_BOX (selected_section), group);
+  adw_preferences_group_set_title (
+    ADW_PREFERENCES_GROUP (selected_file_actions),
+    "Work with Presentation");
+  gtk_box_append (GTK_BOX (selected_section), selected_file_actions);
+  gtk_stack_add_named (pinpoint->setup_stack,
+                       selected_scrolled,
+                       "selected");
+  show_setup_page (pinpoint, "welcome");
+  set_selected_actions_enabled (pinpoint, FALSE, FALSE);
   return toolbar;
 }
 
