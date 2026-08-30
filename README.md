@@ -1,14 +1,27 @@
 # Pinpoint
 
-Pinpoint is a GTK 4 and libadwaita presentation application for GNOME. It is a
-fidelity-first rebuild of the original Clutter-based Pinpoint: existing `.pin`
+Pinpoint is a presentation application for hackers. This is a
+fidelity-first rebuild of the [original Clutter-based Pinpoint](https://gitlab.gnome.org/Archive/pinpoint): existing `.pin`
 presentations remain useful, while the application gains a modern setup screen,
-source editor, speaker view, rehearsal workflow, and PDF export.
+source editor, speaker view, rehearsal workflow, and PDF export by being targeted as a GTK 4 and libadwaita presentation application for GNOME.
 
-The renderer, parser, command-line interface, remote controls, and supported
-presentation syntax are implemented. Remaining work is tracked in
-[TODO.md](TODO.md); the completed compatibility surface is recorded in
-[docs/compatibility.md](docs/compatibility.md).
+This work is inspired by and dedicated to my former colleagues at the [Intel 
+Open Source Technology Center](https://desktopsummit.org/sponsors/intel.html) 
+in London. We tried to fuse creative technologists and designers together to 
+build extraordinary software that took ease of use, ease of hacking and easy on
+ the eye to the next level. Like many things we were probably more influential 
+than successful but pinpoint was software we built for us. To share what we 
+were up to and in frustration that all the software we had available made 
+creating good presentations so hard, especially for non designers. 
+Whilst you can quickly create some mediocre slides in pinpoint it does make 
+it hard to create something truly awful. I've kept using it ever since, but 
+over time it's been harder to keep up to date as the world has moved on and 
+the concepts we worked on became mainstream. These projects are about bringing 
+this tool I use into the modern era, firstly from upgrading the tech stack to 
+ GTK4. And then subsequently in the looser 0.3.0 series in a different repo 
+changing the implementation language to Rust. The codenames of these 
+repositories are based on in jokes from the team about terrible names for forks 
+of open source code and are meant with love.
 
 ## Using Pinpoint
 
