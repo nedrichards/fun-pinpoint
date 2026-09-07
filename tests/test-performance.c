@@ -12,6 +12,8 @@ test_page_curl_mesh (void)
   PpPageCurlMeshVertex vertices[PP_PAGE_CURL_VERTEX_COUNT];
   guint indices[PP_PAGE_CURL_INDEX_COUNT];
   gboolean found_shading = FALSE;
+  gboolean found_near_depth = FALSE;
+  gboolean found_far_depth = FALSE;
 
   pp_page_curl_build_mesh (1280.0f,
                            720.0f,
@@ -23,14 +25,24 @@ test_page_curl_mesh (void)
     {
       g_assert_true (isfinite (vertices[i].x));
       g_assert_true (isfinite (vertices[i].y));
+      g_assert_true (isfinite (vertices[i].z));
       g_assert_cmpfloat (vertices[i].shade, >, 0.0f);
       g_assert_cmpfloat (vertices[i].shade, <=, 1.0f);
       if (vertices[i].shade < 0.99f)
         found_shading = TRUE;
+      if (vertices[i].z < 0.0f)
+        found_near_depth = TRUE;
+      if (vertices[i].z > 0.0f)
+        found_far_depth = TRUE;
     }
   for (guint i = 0; i < PP_PAGE_CURL_INDEX_COUNT; i++)
     g_assert_cmpuint (indices[i], <, PP_PAGE_CURL_VERTEX_COUNT);
   g_assert_true (found_shading);
+  g_assert_true (found_near_depth);
+  g_assert_true (found_far_depth);
+  g_assert_cmpuint (indices[0], ==, 0);
+  g_assert_cmpuint (indices[1], ==, 1);
+  g_assert_cmpuint (indices[2], ==, PP_PAGE_CURL_TILES + 2);
 
   pp_page_curl_build_mesh (800.0f,
                            600.0f,
@@ -40,6 +52,7 @@ test_page_curl_mesh (void)
                            indices);
   g_assert_cmpfloat_with_epsilon (vertices[0].x, -1.0f, 0.0001f);
   g_assert_cmpfloat_with_epsilon (vertices[0].y, 1.0f, 0.0001f);
+  g_assert_cmpfloat_with_epsilon (vertices[0].z, 0.0f, 0.0001f);
   g_assert_cmpfloat_with_epsilon (
     vertices[PP_PAGE_CURL_VERTEX_COUNT - 1].x,
     1.0f,
@@ -51,6 +64,20 @@ test_page_curl_mesh (void)
   g_assert_cmpuint (indices[0], ==, 0);
   g_assert_cmpuint (indices[1], ==, 1);
   g_assert_cmpuint (indices[2], ==, PP_PAGE_CURL_TILES + 2);
+}
+
+static void
+test_page_curl_radius_scales_with_stage (void)
+{
+  g_assert_cmpfloat_with_epsilon (pp_page_curl_radius (640.0f, 360.0f),
+                                  50.0f,
+                                  0.001f);
+  g_assert_cmpfloat_with_epsilon (pp_page_curl_radius (1280.0f, 720.0f),
+                                  100.0f,
+                                  0.001f);
+  g_assert_cmpfloat_with_epsilon (pp_page_curl_radius (1920.0f, 1080.0f),
+                                  150.0f,
+                                  0.001f);
 }
 
 static void
@@ -98,6 +125,8 @@ main (int   argc,
 {
   g_test_init (&argc, &argv, NULL);
   g_test_add_func ("/performance/page-curl-mesh", test_page_curl_mesh);
+  g_test_add_func ("/performance/page-curl-radius-scales-with-stage",
+                   test_page_curl_radius_scales_with_stage);
   g_test_add_func ("/performance/page-curl-cpu-budget",
                    test_page_curl_cpu_budget);
   return g_test_run ();

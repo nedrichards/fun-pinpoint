@@ -26,11 +26,14 @@ typedef struct
 {
   float x;
   float y;
+  float z;
   float u;
   float v;
   float shade;
 } PpPageCurlMeshVertex;
 
+float pp_page_curl_radius        (float width,
+                                  float height);
 void pp_page_curl_deform_vertex (float             width,
                                  float             height,
                                  double            period,

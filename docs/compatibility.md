@@ -26,8 +26,9 @@ fixes.
   presentation, with duration, common easing, and actor/background/midground/
   foreground position, scale, opacity, and three-axis rotation compatibility
 - GPU-backed page-curl and page-curl-both using the original 32x32 deformation
-  mesh and vertex-lighting equation. Mesh depth is reused for triangle order,
-  page rotation is precomputed once, and flat pages use a static GPU mesh
+  mesh and vertex-lighting equation. Mesh depth is resolved by the GPU across
+  the coherent sheet, page rotation is precomputed once, and flat pages use a
+  static GPU mesh
 - GStreamer video backgrounds using `playbin3` and `gtk4paintablesink`
 - A production-runtime media contract covering WebM VP8/VP9/AV1 Main,
   MP4 AV1 Main, MP4/MOV H.264 Baseline/Main/High, Ogg Theora, animated GIF,

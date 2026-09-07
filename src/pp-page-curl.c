@@ -4,28 +4,6 @@
 
 #include <math.h>
 
-typedef struct
-{
-  guint indices[3];
-  float depth;
-} PpPageCurlTriangle;
-
-static int
-compare_triangles (gconstpointer a,
-                   gconstpointer b,
-                   gpointer      user_data)
-{
-  const PpPageCurlTriangle *triangle_a = a;
-  const PpPageCurlTriangle *triangle_b = b;
-
-  (void) user_data;
-  if (triangle_a->depth < triangle_b->depth)
-    return -1;
-  if (triangle_a->depth > triangle_b->depth)
-    return 1;
-  return 0;
-}
-
 static void
 project_vertex (PpPageCurlVertex *vertex,
                 float             width,
@@ -36,6 +14,16 @@ project_vertex (PpPageCurlVertex *vertex,
 
   vertex->x = width / 2.0f + (vertex->x - width / 2.0f) * scale;
   vertex->y = height / 2.0f + (vertex->y - height / 2.0f) * scale;
+}
+
+float
+pp_page_curl_radius (float width,
+                     float height)
+{
+  g_return_val_if_fail (width > 0.0f, 0.0f);
+  g_return_val_if_fail (height > 0.0f, 0.0f);
+
+  return MIN (width, height) * (50.0f / 360.0f);
 }
 
 static void
@@ -112,7 +100,6 @@ pp_page_curl_build_mesh (float                 width,
                          PpPageCurlMeshVertex *vertices,
                          guint                *indices)
 {
-  float depths[PP_PAGE_CURL_VERTEX_COUNT];
   guint index = 0;
   float radians = (float) (angle * (G_PI / 180.0));
   float cosine = cosf (radians);
@@ -143,71 +130,33 @@ pp_page_curl_build_mesh (float                 width,
                                          period,
                                          cosine,
                                          sine,
-                                         50.0f,
+                                         pp_page_curl_radius (width, height),
                                          &destination);
             project_vertex (&destination, width, height);
           }
-        depths[vertex_index] = destination.z;
         vertices[vertex_index] = (PpPageCurlMeshVertex) {
           .x = destination.x / width * 2.0f - 1.0f,
           .y = 1.0f - destination.y / height * 2.0f,
+          .z = -destination.z / (MAX (width, height) * 2.0f),
           .u = (float) x / PP_PAGE_CURL_TILES,
           .v = (float) y / PP_PAGE_CURL_TILES,
           .shade = destination.shade,
         };
       }
 
-  if (period == 0.0)
-    {
-      for (guint y = 0; y < PP_PAGE_CURL_TILES; y++)
-        for (guint x = 0; x < PP_PAGE_CURL_TILES; x++)
-          {
-            guint top_left = y * (PP_PAGE_CURL_TILES + 1) + x;
-            guint top_right = top_left + 1;
-            guint bottom_left = top_left + PP_PAGE_CURL_TILES + 1;
-            guint bottom_right = bottom_left + 1;
+  for (guint y = 0; y < PP_PAGE_CURL_TILES; y++)
+    for (guint x = 0; x < PP_PAGE_CURL_TILES; x++)
+      {
+        guint top_left = y * (PP_PAGE_CURL_TILES + 1) + x;
+        guint top_right = top_left + 1;
+        guint bottom_left = top_left + PP_PAGE_CURL_TILES + 1;
+        guint bottom_right = bottom_left + 1;
 
-            indices[index++] = top_left;
-            indices[index++] = top_right;
-            indices[index++] = bottom_right;
-            indices[index++] = top_left;
-            indices[index++] = bottom_right;
-            indices[index++] = bottom_left;
-          }
-      return;
-    }
-
-  {
-    PpPageCurlTriangle triangles[PP_PAGE_CURL_TRIANGLE_COUNT];
-    guint triangle_index = 0;
-
-    for (guint y = 0; y < PP_PAGE_CURL_TILES; y++)
-      for (guint x = 0; x < PP_PAGE_CURL_TILES; x++)
-        {
-          guint top_left = y * (PP_PAGE_CURL_TILES + 1) + x;
-          guint top_right = top_left + 1;
-          guint bottom_left = top_left + PP_PAGE_CURL_TILES + 1;
-          guint bottom_right = bottom_left + 1;
-
-          triangles[triangle_index++] = (PpPageCurlTriangle) {
-            .indices = { top_left, top_right, bottom_right },
-            .depth = (depths[top_left] + depths[top_right] +
-                      depths[bottom_right]) / 3.0f,
-          };
-          triangles[triangle_index++] = (PpPageCurlTriangle) {
-            .indices = { top_left, bottom_right, bottom_left },
-            .depth = (depths[top_left] + depths[bottom_right] +
-                      depths[bottom_left]) / 3.0f,
-          };
-        }
-
-    g_sort_array (triangles,
-                  G_N_ELEMENTS (triangles),
-                  sizeof (triangles[0]),
-                  compare_triangles,
-                  NULL);
-    for (guint i = 0; i < G_N_ELEMENTS (triangles); i++)
-      for (guint j = 0; j < 3; j++)
-        indices[index++] = triangles[i].indices[j];
-  }
+        indices[index++] = top_left;
+        indices[index++] = top_right;
+        indices[index++] = bottom_right;
+        indices[index++] = top_left;
+        indices[index++] = bottom_right;
+        indices[index++] = bottom_left;
+      }
 }

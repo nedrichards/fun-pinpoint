@@ -69,10 +69,12 @@ librsvg path should remain primary.
 
 ## Page-curl work avoided
 
-The renderer deforms each of the 1,089 mesh vertices once and reuses its depth
-when ordering triangles. Rotation sine and cosine are calculated once per
-page, not once per vertex. A flat page uses a static GPU vertex/index mesh, so
-it performs no per-frame deformation, sorting, or buffer upload.
+The renderer deforms each of the 1,089 mesh vertices once and passes its depth
+to the GPU, which resolves overlap for the sheet as a whole. Rotation sine and
+cosine are calculated once per page, not once per vertex. A flat page uses a
+static GPU vertex/index mesh, so it performs no per-frame deformation or buffer
+upload. The fold radius scales from the original 50 px at 640×360 so it retains
+the same mesh density near the screen edge at larger output sizes.
 
 ## Repeatable Sysprof workloads
 

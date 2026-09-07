@@ -61,13 +61,13 @@ create_program (PpPageCurlView *self)
 {
   static const char vertex_source[] =
     "#version 330 core\n"
-    "layout(location = 0) in vec2 position;\n"
+    "layout(location = 0) in vec3 position;\n"
     "layout(location = 1) in vec2 texture_coordinate;\n"
     "layout(location = 2) in float lighting;\n"
     "out vec2 texture_position;\n"
     "out float shade;\n"
     "void main() {\n"
-    "  gl_Position = vec4(position, 0.0, 1.0);\n"
+    "  gl_Position = vec4(position, 1.0);\n"
     "  texture_position = texture_coordinate;\n"
     "  shade = lighting;\n"
     "}\n";
@@ -130,7 +130,7 @@ configure_mesh (GLuint                       vertex_array,
                 vertices,
                 usage);
   glVertexAttribPointer (0,
-                         2,
+                         3,
                          GL_FLOAT,
                          GL_FALSE,
                          sizeof (PpPageCurlMeshVertex),
@@ -322,21 +322,25 @@ render_cb (GtkGLArea    *area,
   if (!upload_texture (self, 0) || !upload_texture (self, 1))
     g_error ("Unable to upload textures to the required page-curl OpenGL renderer");
   glViewport (0, 0, (GLsizei) viewport_width, (GLsizei) viewport_height);
-  glDisable (GL_DEPTH_TEST);
+  glEnable (GL_DEPTH_TEST);
+  glDepthFunc (GL_LESS);
   glDisable (GL_CULL_FACE);
   glDisable (GL_BLEND);
   glClearColor (0.0f, 0.0f, 0.0f, 1.0f);
-  glClear (GL_COLOR_BUFFER_BIT);
+  glClearDepth (1.0);
+  glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glUseProgram (self->program);
 
   if (self->backwards)
     {
       draw_page (self, 0, self->periods[0], self->angles[0], width, height);
+      glClear (GL_DEPTH_BUFFER_BIT);
       draw_page (self, 1, self->periods[1], self->angles[1], width, height);
     }
   else
     {
       draw_page (self, 1, self->periods[1], self->angles[1], width, height);
+      glClear (GL_DEPTH_BUFFER_BIT);
       draw_page (self, 0, self->periods[0], self->angles[0], width, height);
     }
 
@@ -410,6 +414,7 @@ pp_page_curl_view_init (PpPageCurlView *self)
 {
   gtk_gl_area_set_allowed_apis (GTK_GL_AREA (self), GDK_GL_API_GL);
   gtk_gl_area_set_required_version (GTK_GL_AREA (self), 3, 3);
+  gtk_gl_area_set_has_depth_buffer (GTK_GL_AREA (self), TRUE);
   gtk_gl_area_set_auto_render (GTK_GL_AREA (self), FALSE);
   g_signal_connect_after (self, "realize", G_CALLBACK (realize_cb), NULL);
   g_signal_connect (self, "render", G_CALLBACK (render_cb), NULL);
