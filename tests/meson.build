@@ -42,6 +42,14 @@ control_test = executable(
 
 test('control', control_test)
 
+shortcuts_test = executable(
+  'test-shortcuts',
+  'test-shortcuts.c',
+  dependencies: [pinpoint_core_dep, libadwaita_dep],
+)
+
+test('shortcuts dialog', shortcuts_test)
+
 test(
   'parser',
   parser_test,

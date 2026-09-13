@@ -2260,13 +2260,12 @@ show_shortcuts_action_cb (GSimpleAction *action,
   Pinpoint *pinpoint = user_data;
   g_autoptr (GtkBuilder) builder = gtk_builder_new_from_resource (
     "/com/nedrichards/pinpoint/gtk/shortcuts-window.ui");
-  GtkWindow *dialog = GTK_WINDOW (gtk_builder_get_object (builder,
-                                                           "shortcuts_window"));
+  AdwDialog *dialog = ADW_DIALOG (gtk_builder_get_object (builder,
+                                                          "shortcuts_dialog"));
 
   (void) action;
   (void) parameter;
-  gtk_window_set_transient_for (dialog, pinpoint->window);
-  gtk_window_present (dialog);
+  adw_dialog_present (dialog, GTK_WIDGET (pinpoint->window));
 }
 
 static void
