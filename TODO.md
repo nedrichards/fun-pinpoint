@@ -36,10 +36,11 @@ real-device phone and watch interaction still needs evaluation.
 
 ## Session restoration
 
-Status: design complete; implementation is intentionally blocked on GTK 4.24,
-whose restore-token API is not available in the pinned GNOME 50 runtime.
+Status: design complete; GTK 4.24 is now available in the pinned GNOME 51
+runtime, but its application-state API is still explicitly unstable.
 
-- Recheck the runtime when GTK 4.24 lands.
+- Recheck the API when GTK marks it stable, or make an explicit decision to
+  accept an unstable GNOME-51-only contract.
 - Implement the documented design without persisting presentation paths or
   stage state.
 

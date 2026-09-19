@@ -27,8 +27,8 @@ authoritative home.
   differences from the original Pinpoint.
 - [Accessibility](accessibility.md) — keyboard, assistive-technology, contrast,
   and motion expectations.
-- [Session restoration](session-restore.md) — deferred GTK 4.24 design and
-  privacy boundary.
+- [Session restoration](session-restore.md) — deferred application-state design
+  and privacy boundary.
 
 ## Architecture and performance
 
@@ -38,6 +38,8 @@ authoritative home.
   results.
 - [Performance audit](performance-audit.md) — audit decisions, completed
   optimizations, and remaining opportunities.
+- [GNOME 51 runtime](gnome-51-runtime.md) — compatibility changes, API
+  decisions, and the GNOME 50 comparison.
 
 ## Development and validation
 

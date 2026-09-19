@@ -21,14 +21,14 @@ pinpoint_tagline = 'Excellent presentations for hackers'
 pinpoint_version = meson.project_version()
 
 glib_req = '>= 2.78'
-gtk_req = '>= 4.22'
+gtk_req = '>= 4.24'
 
 glib_dep = dependency('glib-2.0', version: glib_req)
 gio_dep = dependency('gio-2.0', version: glib_req)
 gio_unix_dep = dependency('gio-unix-2.0', version: glib_req)
 gmodule_dep = dependency('gmodule-2.0', version: glib_req)
 gtk_dep = dependency('gtk4', version: gtk_req)
-libadwaita_dep = dependency('libadwaita-1', version: '>= 1.8')
+libadwaita_dep = dependency('libadwaita-1', version: '>= 1.10')
 pango_dep = dependency('pango', version: '>= 1.50')
 pangocairo_dep = dependency('pangocairo', version: '>= 1.50')
 cairo_dep = dependency('cairo', version: '>= 1.16')

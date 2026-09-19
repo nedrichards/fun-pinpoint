@@ -1,6 +1,6 @@
 # Development workflow
 
-Pinpoint uses the pinned GNOME 50 Flatpak SDK as its build and test environment.
+Pinpoint uses the pinned GNOME 51 Flatpak SDK as its build and test environment.
 Do not rely on host library versions: the runtime contract is the one declared
 by the manifests in `flatpak/`.
 
@@ -14,16 +14,16 @@ flatpak-builder --user --install --force-clean build-dir \
   flatpak/com.nedrichards.pinpoint.Devel.json
 ```
 
-Configure, compile, and run the complete suite in the GNOME 50 SDK:
+Configure, compile, and run the complete suite in the GNOME 51 SDK:
 
 ```sh
 flatpak run --user --filesystem="$PWD" --command=meson \
-  org.gnome.Sdk//50 setup "$PWD/_build"
+  org.gnome.Sdk//51 setup "$PWD/_build"
 flatpak run --user --filesystem="$PWD" --command=meson \
-  org.gnome.Sdk//50 compile -C "$PWD/_build"
+  org.gnome.Sdk//51 compile -C "$PWD/_build"
 flatpak run --user --filesystem="$PWD" --device=dri \
   --talk-name=org.freedesktop.Flatpak --socket=wayland --socket=fallback-x11 \
-  --command=meson org.gnome.Sdk//50 test -C "$PWD/_build" \
+  --command=meson org.gnome.Sdk//51 test -C "$PWD/_build" \
   --print-errorlogs --wrapper="$PWD/tests/run-in-devel-flatpak.sh"
 ```
 

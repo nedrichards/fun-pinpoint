@@ -3,7 +3,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-sdk_ref=${PINPOINT_SDK_REF:-org.gnome.Sdk//50}
+sdk_ref=${PINPOINT_SDK_REF:-org.gnome.Sdk//51}
 build_dir="$root/_build-coverage"
 policy="$root/tests/coverage-policy.json"
 report="$build_dir/meson-logs/coverage.json"

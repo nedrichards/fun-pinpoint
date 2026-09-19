@@ -3,7 +3,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-sdk_ref=${PINPOINT_SDK_REF:-org.gnome.Sdk//50}
+sdk_ref=${PINPOINT_SDK_REF:-org.gnome.Sdk//51}
 build_dir="$root/_build-sanitize"
 
 if sdk_location=$(flatpak info --user --show-location "$sdk_ref" 2>/dev/null)

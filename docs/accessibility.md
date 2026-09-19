@@ -27,7 +27,7 @@ gesture needs at least 96 logical pixels and must be predominantly horizontal,
 so ordinary scrolling does not advance a slide. Pinpoint intentionally does
 nothing with three-finger gestures, leaving GNOME workspace navigation alone.
 
-Pinpoint follows GTK 4.22's `gtk-interface-reduced-motion` preference as well as
+Pinpoint follows GTK 4.24's `gtk-interface-reduced-motion` preference as well as
 the older `gtk-enable-animations` setting. When either requests less motion,
 slide transitions complete immediately rather than running a reduced but still
 moving effect. Pinpoint prints one informational message per process when this

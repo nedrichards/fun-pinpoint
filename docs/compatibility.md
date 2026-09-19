@@ -63,7 +63,7 @@ fixes.
 - Portal-backed PDF export from the launch-screen menu, including relative
   sibling image and SVG assets, with post-export actions to open the PDF or
   reveal it in the file manager
-- Desktop, MIME, AppStream, icon, and GNOME 50 Flatpak integration
+- Desktop, MIME, AppStream, icon, and GNOME 51 Flatpak integration
 - Libadwaita launch setup with portal-backed file opening, separate present and
   rehearse paths, fullscreen/speaker/comment options, and audience-display
   selection

@@ -18,7 +18,7 @@ The pipeline has two equally important goals:
 
 File video uses GStreamer's `playbin3` with `gtk4paintablesink`. `playbin3`
 selects demuxers and decoders from the installed runtime, including ranked
-hardware decoders. The GNOME 50 runtime's sink accepts DMA-BUF, GL textures,
+hardware decoders. The GNOME 51 runtime's sink accepts DMA-BUF, GL textures,
 native YUV formats, high-bit-depth YUV, and RGB system memory. Pinpoint does not
 force an RGB caps filter or a software decoder.
 
@@ -93,7 +93,7 @@ content for the actual output scale while repeated video-frame snapshots reuse
 the size-specific node. An SVG source-file change invalidates the shared handle
 and all affected stage nodes immediately.
 
-GTK 4.22's `GtkSvg` was tested against that pixel fixture and representative
+GTK 4.24's `GtkSvg` is tested against that pixel fixture and representative
 compatibility probes. It matched librsvg for the simple self-contained SVG but
 does not implement CSS `<style>`, `<textPath>`, or `<feTurbulence>`. Its
 one-time node-recording saving was only a few microseconds after similar parse

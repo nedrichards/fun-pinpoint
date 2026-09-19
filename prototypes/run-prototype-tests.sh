@@ -4,7 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir=${PINPOINT_PROTOTYPE_BUILD_DIR:-"$root/_build-prototypes"}
 prototype="$build_dir/prototypes/pinpoint-remote-prototype"
-sdk_ref=${PINPOINT_SDK_REF:-org.gnome.Sdk//50}
+sdk_ref=${PINPOINT_SDK_REF:-org.gnome.Sdk//51}
 flatpak_id=${PINPOINT_PROTOTYPE_FLATPAK_ID:-}
 installation=--user
 flatpak_installation=--user

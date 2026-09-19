@@ -7,10 +7,10 @@ the prototype exercises the shipped protocol adapter.
 
 ```sh
 flatpak run --user --filesystem="$PWD" --command=meson \
-  org.gnome.Sdk//50 setup "$PWD/_build-prototypes" \
+  org.gnome.Sdk//51 setup "$PWD/_build-prototypes" \
   -Dremote_prototypes=true
 flatpak run --user --filesystem="$PWD" --command=meson \
-  org.gnome.Sdk//50 compile -C "$PWD/_build-prototypes"
+  org.gnome.Sdk//51 compile -C "$PWD/_build-prototypes"
 prototypes/run-prototype-tests.sh
 ```
 

@@ -107,7 +107,7 @@ camera, and PDF-export options. The stable command-line contract is documented i
 
 ## Development
 
-Pinpoint is built and tested with the pinned GNOME 50 SDK. Install the
+Pinpoint is built and tested with the pinned GNOME 51 SDK. Install the
 development Flatpak before running the test suite so media decoding has the
 application's Flatpak identity. The exact configure, build, test, analysis, and
 local-run commands are in [docs/development.md](docs/development.md). The

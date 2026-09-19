@@ -13,12 +13,12 @@ user-visible contract changes. Flatpak manifests live in `flatpak/`.
 
 ## Build, Test, and Development Commands
 
-Use the pinned GNOME 50 SDK, not the host toolchain:
+Use the pinned GNOME 51 SDK, not the host toolchain:
 
 ```sh
-flatpak run --user --filesystem="$PWD" --command=meson org.gnome.Sdk//50 setup "$PWD/_build"
-flatpak run --user --filesystem="$PWD" --command=meson org.gnome.Sdk//50 compile -C "$PWD/_build"
-flatpak run --user --filesystem="$PWD" --device=dri --talk-name=org.freedesktop.Flatpak --socket=wayland --socket=fallback-x11 --command=meson org.gnome.Sdk//50 test -C "$PWD/_build" --print-errorlogs --wrapper="$PWD/tests/run-in-devel-flatpak.sh"
+flatpak run --user --filesystem="$PWD" --command=meson org.gnome.Sdk//51 setup "$PWD/_build"
+flatpak run --user --filesystem="$PWD" --command=meson org.gnome.Sdk//51 compile -C "$PWD/_build"
+flatpak run --user --filesystem="$PWD" --device=dri --talk-name=org.freedesktop.Flatpak --socket=wayland --socket=fallback-x11 --command=meson org.gnome.Sdk//51 test -C "$PWD/_build" --print-errorlogs --wrapper="$PWD/tests/run-in-devel-flatpak.sh"
 ```
 
 Install the development app with `flatpak-builder --user --install --force-clean

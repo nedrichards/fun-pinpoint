@@ -1,7 +1,7 @@
 # C coverage policy
 
 Pinpoint measures every authored production C file with GCC 15 and `gcov` from
-the pinned GNOME 50 SDK. It does not require LLVM, `gcovr`, `lcov`, or a host C
+the pinned GNOME 51 SDK. It does not require LLVM, `gcovr`, `lcov`, or a host C
 toolchain.
 
 Run the gate from a graphical host session:

@@ -4,7 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir=${PINPOINT_BUILD_DIR:-"$root/_build"}
 fixture="$root/tests/fixtures/multi-monitor.pin"
-sdk_ref=${PINPOINT_SDK_REF:-org.gnome.Sdk//50}
+sdk_ref=${PINPOINT_SDK_REF:-org.gnome.Sdk//51}
 flatpak_id=${PINPOINT_FLATPAK_ID:-}
 installation=--user
 

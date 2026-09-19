@@ -1,7 +1,7 @@
 # Performance and efficiency
 
 Pinpoint keeps repeatable performance, idle-work, and package-size checks in
-the normal GNOME 50 SDK test suite. Synthetic measurements are treated as
+the normal GNOME 51 SDK test suite. Synthetic measurements are treated as
 regression gates, not as substitutes for battery and GPU measurements on real
 hardware.
 
@@ -24,7 +24,7 @@ hardware.
 - Renderer pixel checks cover 800×600, 1280×720 widescreen, and 800×600 at 2×
   scale. They verify stage dimensions, background color, text, shading, and
   cached vector SVG rendering. A separate SVG comparison renders the existing
-  fixture through both librsvg and GTK 4.22's `GtkSvg`, checks bounded pixel
+  fixture through both librsvg and GTK 4.24's `GtkSvg`, checks bounded pixel
   differences, and exercises GTK's structured unsupported-feature errors.
 - AddressSanitizer, UndefinedBehaviorSanitizer, and LeakSanitizer cover parser,
   media, transition, page-curl, and shutdown lifecycles. Leak suppressions are
@@ -38,17 +38,17 @@ To print the page-curl timing and current size figures directly:
 
 ```sh
 flatpak run --user --filesystem="$PWD" \
-  --command="$PWD/_build/tests/test-performance" org.gnome.Sdk//50 --verbose
+  --command="$PWD/_build/tests/test-performance" org.gnome.Sdk//51 --verbose
 flatpak run --user --filesystem="$PWD" \
-  --command="$PWD/_build/tests/test-size" org.gnome.Sdk//50 \
+  --command="$PWD/_build/tests/test-size" org.gnome.Sdk//51 \
   "$PWD/_build/src/pinpoint" "$PWD/data/introduction/bunny.webm" --verbose
 flatpak run --user --filesystem="$PWD" \
   --device=dri --socket=wayland --socket=fallback-x11 \
-  --command="$PWD/_build/tests/test-svg-renderers" org.gnome.Sdk//50 \
+  --command="$PWD/_build/tests/test-svg-renderers" org.gnome.Sdk//51 \
   "$PWD/tests/fixtures/svg-quality.svg" --verbose
 ```
 
-`tests/run-leak-checks.sh` still compiles entirely in the GNOME 50 SDK, then
+`tests/run-leak-checks.sh` still compiles entirely in the GNOME 51 SDK, then
 runs the sanitizer binaries on the host with libraries from that exact SDK so
 LeakSanitizer can inspect them.
 

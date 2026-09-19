@@ -1,6 +1,6 @@
 #include "pp-control.h"
 
-#include <gdk/gdkkeysyms.h>
+#include <gdk/gdk.h>
 #include <glib.h>
 
 typedef struct

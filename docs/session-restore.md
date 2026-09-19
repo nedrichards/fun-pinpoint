@@ -13,17 +13,16 @@ owns only the presentation state needed to reconstruct a safe new process.
 
 ## Platform status
 
-The GNOME 50 SDK used by Pinpoint currently contains GTK 4.22.4. GTK registers
-applications with the session manager at this version, but it does not expose
-the application state-saving API. The pinned headers have `query-end`, but not
-`support-save`, `autosave-interval`, `save-state`, `restore-state`,
-`restore-window`, or `gtk_application_save()`.
+The GNOME 51 SDK used by Pinpoint contains GTK 4.24.0 and exposes the
+application state-saving API: `support-save`, `autosave-interval`,
+`save-state`, `restore-state`, `restore-window`, and
+`gtk_application_save()`. GTK still marks this API unstable.
 
-Those APIs are being introduced as unstable GTK 4.24 API. Pinpoint should
-integrate through GTK rather than calling the private
+Pinpoint should integrate through GTK rather than calling the private
 `org.gnome.SessionManager` restore methods directly. The application can opt in
-once the GTK API is available; GTK and the desktop decide whether a particular
-session can consume the saved state.
+after the API stabilizes, or after an explicit decision to accept an unstable
+GNOME-51-only contract; GTK and the desktop decide whether a particular session
+can consume the saved state.
 
 The current GNOME session reports `RestoreSupported=false`, and its public
 `org.freedesktop.portal.Desktop` object has no application-state interface.
@@ -111,8 +110,8 @@ displays.
 
 ## GTK integration gate
 
-Implementation is blocked until Pinpoint's pinned runtime provides GTK 4.24 or
-a later stable version of the same API. Once it does:
+Implementation remains deferred while GTK labels the application-state API
+unstable. Once it stabilizes, or the project explicitly accepts that risk:
 
 1. Set `GtkApplication:support-save` and keep GTK's default autosave interval.
 2. Handle `GtkApplication::save-state` for the shared presentation model.

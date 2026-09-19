@@ -22,6 +22,7 @@ typedef struct
   PpStage *preview;
   GtkLabel *status;
   GtkButton *save_button;
+  GtkPopoverBin *completion_bin;
   GtkPopover *completion;
   GtkTextTag *warning_tag;
   GtkTextTag *error_tag;
@@ -947,7 +948,7 @@ apply_completion (PpEditor                 *self,
     gtk_text_iter_backward_char (&start);
   gtk_text_buffer_place_cursor (GTK_TEXT_BUFFER (self->buffer), &start);
   gtk_widget_grab_focus (GTK_WIDGET (self->source_view));
-  gtk_popover_popdown (self->completion);
+  gtk_popover_bin_popdown (self->completion_bin);
 }
 
 static void
@@ -979,7 +980,7 @@ completion_key_pressed_cb (GtkEventControllerKey *controller,
   (void) state;
   if (keyval == GDK_KEY_Escape)
     {
-      gtk_popover_popdown (self->completion);
+      gtk_popover_bin_popdown (self->completion_bin);
       gtk_widget_grab_focus (GTK_WIDGET (self->source_view));
       return GDK_EVENT_STOP;
     }
@@ -1046,7 +1047,7 @@ show_completion (PpEditor *self)
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroll),
                                  GTK_WIDGET (list));
   gtk_popover_set_child (self->completion, scroll);
-  gtk_popover_popup (self->completion);
+  gtk_popover_bin_popup (self->completion_bin);
   gtk_list_box_select_row (list, gtk_list_box_get_row_at_index (list, 0));
   gtk_widget_grab_focus (GTK_WIDGET (list));
 }
@@ -1149,6 +1150,7 @@ create_editor (PpEditor *self)
     gtk_source_buffer_set_language (self->buffer, language);
   self->source_view = GTK_SOURCE_VIEW (
     gtk_source_view_new_with_buffer (self->buffer));
+  self->completion_bin = GTK_POPOVER_BIN (gtk_popover_bin_new ());
   gtk_source_view_set_show_line_numbers (self->source_view, TRUE);
   gtk_source_view_set_highlight_current_line (self->source_view, TRUE);
   gtk_source_view_set_auto_indent (self->source_view, TRUE);
@@ -1180,8 +1182,10 @@ create_editor (PpEditor *self)
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (outline_scroll),
                                  GTK_WIDGET (self->outline));
   gtk_widget_add_css_class (outline_scroll, "sidebar");
+  gtk_popover_bin_set_child (self->completion_bin,
+                             GTK_WIDGET (self->source_view));
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (source_scroll),
-                                 GTK_WIDGET (self->source_view));
+                                 GTK_WIDGET (self->completion_bin));
 
   self->preview = PP_STAGE (pp_stage_new ());
   pp_stage_set_audio_enabled (self->preview, FALSE);
@@ -1241,7 +1245,8 @@ create_editor (PpEditor *self)
   adw_toolbar_view_set_content (toolbar_view, status_box);
 
   self->completion = GTK_POPOVER (gtk_popover_new ());
-  gtk_widget_set_parent (GTK_WIDGET (self->completion), GTK_WIDGET (self->source_view));
+  gtk_popover_bin_set_popover (self->completion_bin,
+                               GTK_WIDGET (self->completion));
   gtk_popover_set_position (self->completion, GTK_POS_BOTTOM);
   g_signal_connect (keys, "key-pressed", G_CALLBACK (editor_key_pressed_cb), self);
   gtk_widget_add_controller (GTK_WIDGET (self->source_view), keys);
