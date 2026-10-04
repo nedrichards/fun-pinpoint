@@ -452,6 +452,8 @@ test_reload_then_shutdown (void)
   wait_for_mpris_title (connection, mpris_name, "Slide 1 of 2");
   g_subprocess_send_signal (process, SIGTERM);
   g_autofree char *stderr_text = finish_process (process, 128 + SIGTERM);
+  if (strstr (stderr_text, "pinpoint:") != NULL)
+    g_test_message ("Application stderr after reload: %s", stderr_text);
   g_assert_null (strstr (stderr_text, "pinpoint:"));
   g_assert_cmpint (g_remove (path), ==, 0);
   g_assert_cmpint (g_remove (asset_path), ==, 0);

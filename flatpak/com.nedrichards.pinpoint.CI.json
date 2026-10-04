@@ -1,0 +1,53 @@
+{
+  "app-id": "com.nedrichards.pinpoint.Devel",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "51",
+  "sdk": "org.gnome.Sdk",
+  "command": "pinpoint",
+  "rename-desktop-file": "com.nedrichards.pinpoint.desktop",
+  "rename-icon": "com.nedrichards.pinpoint",
+  "rename-appdata-file": "com.nedrichards.pinpoint.metainfo.xml",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--socket=pulseaudio"
+  ],
+  "cleanup": [
+    "/include",
+    "/lib/pkgconfig",
+    "/share/man",
+    "/share/mime/packages/com.nedrichards.pinpoint.xml"
+  ],
+  "modules": [
+    {
+      "name": "pinpoint",
+      "buildsystem": "meson",
+      "config-opts": [
+        "--prefix=/app",
+        "-Deditor=enabled",
+        "-Dbuildtype=release"
+      ],
+      "run-tests": true,
+      "sources": [
+        {
+          "type": "dir",
+          "path": ".."
+        },
+        {
+          "type": "file",
+          "path": "../scripts/ci/headless-meson.py",
+          "dest-filename": "ci-headless-meson.py"
+        }
+      ],
+      "build-options": {
+        "cflags": "-g0"
+      },
+      "test-rule": "",
+      "test-commands": [
+        "dbus-run-session -- python3 ../ci-headless-meson.py meson test --no-rebuild --print-errorlogs --timeout-multiplier=3 --num-processes=1"
+      ]
+    }
+  ]
+}

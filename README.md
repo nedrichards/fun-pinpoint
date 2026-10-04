@@ -122,3 +122,6 @@ Pinpoint is distributed under the GNU Lesser General Public License, version
 2.1 or later. See [COPYING](COPYING). Provenance and licensing for the bundled
 introduction media are recorded in
 [data/introduction/ORIGIN.md](data/introduction/ORIGIN.md).
+
+Dependency checks, CI artifacts, and release packaging are described in
+[Maintenance](docs/maintenance.md).
