@@ -771,6 +771,24 @@ media_bus_cb (GstBus     *bus,
 }
 
 static void
+stop_media_for_disposal (GstElement *player)
+{
+  gint64 deadline = g_get_monotonic_time () + 2 * G_TIME_SPAN_SECOND;
+
+  /* gtk4paintablesink can be initializing on a streaming thread and waiting
+   * for the GTK main context. Let that pending upward transition finish before
+   * taking the pipeline state lock for shutdown. Keep the existing two-second
+   * state budget, and perform all GTK sink transitions on the main thread. */
+  while (gst_element_get_state (player, NULL, NULL, 0) == GST_STATE_CHANGE_ASYNC &&
+         g_get_monotonic_time () < deadline)
+    {
+      g_main_context_iteration (NULL, FALSE);
+      g_usleep (1000);
+    }
+  gst_element_set_state (player, GST_STATE_NULL);
+}
+
+static void
 media_free (PpMedia *media)
 {
   if (media == NULL)
@@ -781,11 +799,7 @@ media_free (PpMedia *media)
     g_source_remove (media->bus_watch_id);
   if (GST_IS_ELEMENT (media->player))
     {
-      gst_element_set_state (media->player, GST_STATE_NULL);
-      gst_element_get_state (media->player,
-                             NULL,
-                             NULL,
-                             2 * GST_SECOND);
+      stop_media_for_disposal (media->player);
     }
   g_clear_object (&media->paintable);
   gst_clear_object (&media->video_sink);

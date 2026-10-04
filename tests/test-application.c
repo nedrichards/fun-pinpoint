@@ -104,6 +104,8 @@ launch_application_with_renderer (const char *const *arguments,
   GSubprocess *process;
 
   g_subprocess_launcher_setenv (launcher, "G_DEBUG", "fatal-criticals", TRUE);
+  /* Keep the startup/shutdown race reproducible even outside Meson. */
+  g_subprocess_launcher_setenv (launcher, "MALLOC_PERTURB_", "220", TRUE);
   if (renderer != NULL)
     g_subprocess_launcher_setenv (launcher, "GSK_RENDERER", renderer, TRUE);
   process = g_subprocess_launcher_spawnv (launcher, arguments, &error);
