@@ -21,3 +21,5 @@ Headless tests use GTK's built-in simple input context. Hosted build containers 
 Headless renderer tests select Mesa OpenGL. Cairo is incompatible with the application stage contract, and Vulkan presentation depends on the compositor. OpenGL still exercises the real stage, pixels, media and lifecycle assertions.
 
 The editor widget test disables animations to avoid duplicate frame submission warnings on headless GTK renderers. Completion, shortcut, file lifecycle and teardown assertions remain required. This setting applies only inside the test executable; installed desktop animation checks remain part of the display gate.
+
+With `PINPOINT_HEADLESS_TESTS` set by the CI harness, the editor test retains GTK's exact X11 `gdk_frame_timings_submitted() called on submitted frame.` warning in its output but treats that one framework diagnostic as nonfatal. This warning recurred in hosted runs even after disabling animations. Every other warning and every application/widget assertion remains fatal. Normal desktop test runs retain the original warning policy.

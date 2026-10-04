@@ -16,6 +16,53 @@ typedef struct
   gboolean launch_rehearsal;
 } HostState;
 
+static gboolean
+editor_log_is_fatal (const gchar    *domain,
+                     GLogLevelFlags level,
+                     const gchar    *message,
+                     gpointer        data)
+{
+  (void) data;
+
+  /* GTK's X11 frame bookkeeping reports duplicate submission on headless
+   * runners, even with animations disabled. Preserve the warning in the log,
+   * but do not make this one framework diagnostic a widget-test failure.
+   * Every other warning and all application assertions remain fatal. */
+  if (g_strcmp0 (domain, "Gdk") == 0 &&
+      (level & G_LOG_LEVEL_WARNING) != 0 &&
+      g_strcmp0 (message,
+                 "gdk_frame_timings_submitted() called on submitted frame.") == 0)
+    return FALSE;
+  return TRUE;
+}
+
+static GLogWriterOutput
+editor_structured_log_writer (GLogLevelFlags  level,
+                              const GLogField *fields,
+                              gsize            n_fields,
+                              gpointer         data)
+{
+  g_autofree gchar *domain = NULL;
+  g_autofree gchar *message = NULL;
+
+  for (gsize i = 0; i < n_fields; i++)
+    {
+      gchar **target = NULL;
+
+      if (g_str_equal (fields[i].key, "GLIB_DOMAIN"))
+        target = &domain;
+      else if (g_str_equal (fields[i].key, "MESSAGE"))
+        target = &message;
+      if (target != NULL)
+        *target = fields[i].length < 0
+          ? g_strdup (fields[i].value)
+          : g_strndup (fields[i].value, fields[i].length);
+    }
+  if (!editor_log_is_fatal (domain, level, message, NULL))
+    return g_log_writer_standard_streams (level, fields, n_fields, data);
+  return g_log_writer_default (level, fields, n_fields, data);
+}
+
 static void
 run_loop_for (guint milliseconds)
 {
@@ -671,6 +718,11 @@ main (int   argc,
 
   g_test_init (&argc, &argv, NULL);
   g_assert_cmpint (argc, ==, 2);
+  if (g_getenv ("PINPOINT_HEADLESS_TESTS") != NULL)
+    {
+      g_test_log_set_fatal_handler (editor_log_is_fatal, NULL);
+      g_log_set_writer_func (editor_structured_log_writer, NULL, NULL);
+    }
   if (!gtk_init_check ())
     return 77;
 
