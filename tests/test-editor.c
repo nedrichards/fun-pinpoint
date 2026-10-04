@@ -674,6 +674,13 @@ main (int   argc,
   if (!gtk_init_check ())
     return 77;
 
+  /* These checks exercise completion, shortcuts and widget lifetime. Popover
+   * animation on headless GTK renderers can submit a frame twice; animation
+   * and compositor behavior belong to the installed desktop display gate. */
+  g_object_set (gtk_settings_get_default (),
+                "gtk-enable-animations", FALSE,
+                NULL);
+
   module = g_module_open (argv[1], G_MODULE_BIND_LAZY | G_MODULE_BIND_LOCAL);
   g_assert_nonnull (module);
   g_module_make_resident (module);

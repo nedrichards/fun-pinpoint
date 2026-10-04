@@ -19,3 +19,5 @@ GitHub repository settings also enable dependency vulnerability alerts, Dependab
 Headless tests use GTK's built-in simple input context. Hosted build containers have no IBus daemon or machine-id; selecting IBus produces fatal input-service warnings in the entry/editor tests. Real input-method compatibility remains an installed desktop check.
 
 Headless renderer tests select Mesa OpenGL. Cairo is incompatible with the application stage contract, and Vulkan presentation depends on the compositor. OpenGL still exercises the real stage, pixels, media and lifecycle assertions.
+
+The editor widget test disables animations to avoid duplicate frame submission warnings on headless GTK renderers. Completion, shortcut, file lifecycle and teardown assertions remain required. This setting applies only inside the test executable; installed desktop animation checks remain part of the display gate.
