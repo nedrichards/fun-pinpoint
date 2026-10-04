@@ -50,6 +50,9 @@ def main():
         raise SystemExit("usage: headless-meson.py COMMAND [ARGUMENT...]")
     os.environ.pop("GDK_DEBUG", None)
     os.environ["GSETTINGS_BACKEND"] = "memory"
+    # The build container has no IBus daemon or machine-id. Exercise entry and
+    # editor input with GTK's built-in context; real IME checks need a desktop.
+    os.environ["GTK_IM_MODULE"] = "simple"
     loop = GLib.MainLoop()
     process = None
     status = 1

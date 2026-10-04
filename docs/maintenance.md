@@ -15,3 +15,5 @@ GitHub bundles are sideloadable packages. Flathub updates continue through the F
 The automated suite uses an isolated D-Bus session with test-only desktop services because headless runners lack desktop portals and a session manager. Inhibition and monitor handles stay in memory; no host screen lock is affected. Renderer suites run serially. The harness is only used by test commands and is never installed in the app. Real portal/camera and compositor checks remain part of the installed-app release gates.
 
 GitHub repository settings also enable dependency vulnerability alerts, Dependabot security updates, and weekly CodeQL default setup. Security updates propose pull requests; they do not merge them or publish app releases. The default CodeQL configuration lives in GitHub settings, alongside these versioned maintenance workflows.
+
+Headless tests use GTK's built-in simple input context. Hosted build containers have no IBus daemon or machine-id; selecting IBus produces fatal input-service warnings in the entry/editor tests. Real input-method compatibility remains an installed desktop check.
