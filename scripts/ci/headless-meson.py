@@ -53,6 +53,9 @@ def main():
     # The build container has no IBus daemon or machine-id. Exercise entry and
     # editor input with GTK's built-in context; real IME checks need a desktop.
     os.environ["GTK_IM_MODULE"] = "simple"
+    # Xvfb has no hardware presentation device; Mesa OpenGL keeps the real
+    # stage renderer and media path without Vulkan presentation dependencies.
+    os.environ["GSK_RENDERER"] = "gl"
     loop = GLib.MainLoop()
     process = None
     status = 1

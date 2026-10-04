@@ -102,12 +102,10 @@ if gtksourceview_test_dep.found()
     'composition editor',
     editor_test,
     args: [pinpoint_editor_module],
-    # GTK 4.24's Wayland Vulkan path can report the same frame as presented
-    # twice with adjacent refresh timestamps while animating a popover. Keep
-    # warnings fatal and exercise this widget lifecycle with the software
-    # renderer; the renderer, pixel, lifecycle, and application suites retain
-    # GPU coverage.
-    env: ['GSK_RENDERER=cairo'],
+    # GTK's Wayland Vulkan path can report duplicate frame presentation while
+    # animating a popover. Use OpenGL, which supports Pinpoint's stage, rather
+    # than Cairo (rejected by the application's renderer contract).
+    env: ['GSK_RENDERER=gl'],
     is_parallel: false,
     timeout: 10,
   )
