@@ -125,3 +125,5 @@ introduction media are recorded in
 
 Dependency checks, CI artifacts, and release packaging are described in
 [Maintenance](docs/maintenance.md).
+
+For hosted checks and artifacts, see [continuous integration](docs/CI.md).

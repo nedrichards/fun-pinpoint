@@ -20,3 +20,7 @@ perf.data.old
 core
 core.*
 compile_commands.json
+
+/.ci-results/
+
+/build-ci/

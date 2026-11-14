@@ -33,7 +33,11 @@
       "sources": [
         {
           "type": "dir",
-          "path": ".."
+          "path": "..",
+          "skip": [
+            "build-ci",
+            ".ci-results"
+          ]
         },
         {
           "type": "file",
